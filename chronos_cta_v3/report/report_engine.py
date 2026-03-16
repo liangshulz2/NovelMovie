@@ -1,4 +1,6 @@
-"""Performance report generation."""
+"""Performance report generation and diagnostics."""
+
+from __future__ import annotations
 
 import numpy as np
 import pandas as pd
@@ -14,3 +16,10 @@ def performance_stats(equity: pd.Series) -> dict:
     sharpe = np.sqrt(252) * ret.mean() / max(ret.std(), 1e-8)
     dd = (equity / equity.cummax() - 1).min()
     return {"cagr": float(cagr), "sharpe": float(sharpe), "max_drawdown": float(dd)}
+
+
+def auto_factor_ic_report(df: pd.DataFrame, target_col: str) -> pd.DataFrame:
+    """Automatic IC analysis report for all numeric factors."""
+    from factors.factor_selector import factor_ic_analysis
+
+    return factor_ic_analysis(df, target_col, method="spearman")

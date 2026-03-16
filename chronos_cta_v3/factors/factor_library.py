@@ -1,4 +1,4 @@
-"""CTA factor library (60+ factors) for cross-commodity research."""
+"""CTA factor library (80+ factors) for cross-commodity research."""
 
 import numpy as np
 import pandas as pd
@@ -99,6 +99,30 @@ def compute_factors(df: pd.DataFrame) -> pd.DataFrame:
     d["up_down_ratio_20"] = _safe_div((ret1 > 0).rolling(20).sum(), (ret1 < 0).rolling(20).sum())
     d["ret_autocorr_20"] = ret1.rolling(20).corr(ret1.shift(1))
     d["ret_autocorr_60"] = ret1.rolling(60).corr(ret1.shift(1))
+
+    # Higher moments / tail risk (8)
+    for w in [10, 20, 60]:
+        d[f"downside_vol{w}"] = ret1.clip(upper=0).rolling(w).std()
+        d[f"upside_vol{w}"] = ret1.clip(lower=0).rolling(w).std()
+    d["tail_ratio_20"] = _safe_div(d["upside_vol20"], d["downside_vol20"])
+    d["max_dd_60"] = _safe_div(close, close.rolling(60).max()) - 1
+    d["max_uu_60"] = _safe_div(close, close.rolling(60).min()) - 1
+
+    # Relative strength / ranking (8)
+    for w in [10, 20, 60, 120]:
+        d[f"zret{w}"] = (ret1 - ret1.rolling(w).mean()) / ret1.rolling(w).std()
+    d["price_zscore_20"] = (close - close.rolling(20).mean()) / close.rolling(20).std()
+    d["price_zscore_60"] = (close - close.rolling(60).mean()) / close.rolling(60).std()
+    d["range_ratio_20_60"] = _safe_div((high - low).rolling(20).mean(), (high - low).rolling(60).mean())
+    d["volume_ratio_20_60"] = _safe_div(volm.rolling(20).mean(), volm.rolling(60).mean())
+
+    # Regime and stability (6)
+    d["trend_stability_20"] = _safe_div(d["mom20"], d["vol20"])
+    d["trend_stability_60"] = _safe_div(d["mom60"], d["vol60"])
+    d["vol_regime"] = d["vol20"] > d["vol60"]
+    d["momentum_regime"] = d["mom20"] > 0
+    d["regime_score"] = d[["vol_regime", "momentum_regime"]].astype(float).mean(axis=1)
+    d["close_open_gap_std_20"] = d["overnight_gap"].rolling(20).std()
 
     d = d.replace([np.inf, -np.inf], np.nan)
     return d

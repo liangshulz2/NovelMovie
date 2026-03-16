@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import numpy as np
 import pandas as pd
 
 from config import (
@@ -21,11 +20,12 @@ from data.futures_loader import load_futures
 from factors.factor_library import compute_factors
 from factors.factor_selector import select_features
 from model.chronos_model import ChronosModel
-from model.ensemble_model import ensemble_alpha
+from model.ensemble_model import bayesian_model_averaging
 from model.xgb_model import XGBModel
 from alpha.alpha_engine import generate_signal
 from portfolio.portfolio_engine import final_position, kelly_scale, volatility_target
 from portfolio.risk_parity import apply_risk_budget
+from portfolio.optimizer import correlation_matrix, optimize_portfolio
 from risk.risk_engine import portfolio_risk
 
 
@@ -34,6 +34,9 @@ def run() -> pd.DataFrame:
     xgb = XGBModel()
 
     records = []
+    alpha_series = {}
+    return_series = {}
+
     for symbol in SYMBOLS:
         df = compute_factors(load_futures(symbol)).tail(LOOKBACK).copy()
         if len(df) < MIN_HISTORY:
@@ -55,8 +58,15 @@ def run() -> pd.DataFrame:
         close = df["close"].dropna()
         factor_mat = df[feats].fillna(0)
         chronos_pred = chronos.predict(close, factor_mat, PRED_LEN)
+        chronos_alpha = float((chronos_pred.mean() - chronos_pred[0]) / chronos_pred[0])
 
-        alpha = ensemble_alpha(chronos_pred, ml_pred)
+        alpha, model_weights = bayesian_model_averaging(
+            predictions={"chronos": chronos_alpha, "xgb": ml_pred},
+            errors={
+                "chronos": abs(float(model_df["target"].iloc[-1] - chronos_alpha)) + 1e-6,
+                "xgb": abs(float(model_df["target"].iloc[-1] - ml_pred)) + 1e-6,
+            },
+        )
         signal = generate_signal(alpha)
 
         vol = float(df["vol20"].iloc[-1]) if "vol20" in df.columns else float(df["close"].pct_change().rolling(20).std().iloc[-1])
@@ -72,8 +82,12 @@ def run() -> pd.DataFrame:
                 "signal": signal,
                 "vol20": vol,
                 "raw_position": position,
+                "weight_chronos": model_weights.get("chronos", 0.0),
+                "weight_xgb": model_weights.get("xgb", 0.0),
             }
         )
+        alpha_series[symbol] = df["target"].tail(60).reset_index(drop=True)
+        return_series[symbol] = df["target"].tail(60).reset_index(drop=True)
 
     out = pd.DataFrame(records)
     if out.empty:
@@ -84,6 +98,15 @@ def run() -> pd.DataFrame:
         out.set_index("symbol")["vol20"],
         MAX_PORTFOLIO_RISK,
     ).values
+
+    ret_df = pd.DataFrame(return_series).dropna(how="all")
+    if not ret_df.empty and ret_df.shape[1] > 1:
+        corr = correlation_matrix(ret_df)
+        rp_w = optimize_portfolio(ret_df.fillna(0), method="risk_parity")
+        out["risk_parity_weight"] = out["symbol"].map(rp_w).fillna(0.0)
+        out["corr_avg"] = out["symbol"].map(corr.mean()).fillna(0.0)
+        out["position"] = out["position"] * (0.5 + out["risk_parity_weight"])
+
     out["notional"] = out["position"] * CAPITAL
     out["portfolio_risk"] = portfolio_risk(
         out.set_index("symbol")["position"], out.set_index("symbol")["vol20"]

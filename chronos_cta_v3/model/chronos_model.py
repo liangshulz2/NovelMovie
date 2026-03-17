@@ -11,7 +11,11 @@ class ChronosModel:
 
     def predict(self, close, factors, pred_len: int = 10) -> np.ndarray:
         target = torch.tensor(close.values.astype(np.float32))
-        cov = torch.tensor(factors.values.astype(np.float32))
+        #cov = torch.tensor(factors.values.astype(np.float32))
+        cov = {
+        col: torch.tensor(factors[col].values.astype(np.float32))
+        for col in factors.columns if col not in ["date","close","high","low"]
+    }
 
         forecast = self.model.predict(
             inputs=[{"target": target, "past_covariates": cov}],

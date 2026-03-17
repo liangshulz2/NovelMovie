@@ -118,10 +118,15 @@ def run() -> pd.DataFrame:
         )
         signal = generate_signal(alpha)
 
+        latest_close = float(df["close"].iloc[-1])
         vol = float(df["vol20"].iloc[-1]) if "vol20" in df.columns else float(df["close"].pct_change().rolling(20).std().iloc[-1])
+        atr14 = float(df["atr14"].iloc[-1]) if "atr14" in df.columns and pd.notna(df["atr14"].iloc[-1]) else latest_close * max(vol, 0.005)
         base = volatility_target(alpha, vol, TARGET_VOL)
         kelly = kelly_scale(alpha, vol)
         position = final_position(signal, base, kelly, MAX_POSITION)
+
+        stop_loss_price = latest_close - signal * 1.5 * atr14
+        target_price = latest_close + signal * 3.0 * atr14
 
         records.append(
             {
@@ -133,6 +138,8 @@ def run() -> pd.DataFrame:
                 "raw_position": position,
                 "weight_chronos": model_weights.get("chronos", 0.0),
                 "weight_xgb": model_weights.get("xgb", 0.0),
+                "stop_loss_price": stop_loss_price,
+                "target_price": target_price,
             }
         )
         alpha_series[symbol] = df["target"].tail(60).reset_index(drop=True)
@@ -170,4 +177,16 @@ if __name__ == "__main__":
     if result.empty:
         print("No tradable symbols generated for the current sample.")
     else:
-        print(result[["symbol", "alpha", "signal", "position", "notional"]].to_string(index=False))
+        print(
+            result[
+                [
+                    "symbol",
+                    "alpha",
+                    "signal",
+                    "position",
+                    "notional",
+                    "stop_loss_price",
+                    "target_price",
+                ]
+            ].to_string(index=False)
+        )

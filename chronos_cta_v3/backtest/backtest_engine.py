@@ -45,8 +45,15 @@ def walk_forward_backtest(
     returns: pd.Series,
     train_window: int = 120,
     test_window: int = 20,
+    start_date: str | pd.Timestamp | None = None,
 ) -> pd.DataFrame:
     """Walk-forward backtest with automatic threshold re-fit per window."""
+    if start_date is not None:
+        start_ts = pd.Timestamp(start_date)
+        mask = predictions.index >= start_ts
+        predictions = predictions.loc[mask]
+        returns = returns.loc[predictions.index]
+
     rows = []
     n = len(predictions)
     for start in range(train_window, n, test_window):
@@ -77,6 +84,57 @@ def walk_forward_backtest(
     return out
 
 
+def trade_records(daily: pd.DataFrame, prices: pd.Series | None = None) -> pd.DataFrame:
+    """Generate trade records from a backtest daily dataframe."""
+    if daily.empty:
+        return pd.DataFrame(
+            columns=[
+                "date",
+                "action",
+                "from_position",
+                "to_position",
+                "prediction",
+                "price",
+                "pnl",
+                "equity",
+            ]
+        )
+
+    records = []
+    prev_pos = 0.0
+    price_series = prices.reindex(daily["date"]).astype(float) if prices is not None else None
+
+    for i, row in daily.iterrows():
+        new_pos = float(row["position"])
+        if np.isclose(new_pos, prev_pos):
+            continue
+
+        if np.isclose(prev_pos, 0.0) and not np.isclose(new_pos, 0.0):
+            action = "OPEN"
+        elif not np.isclose(prev_pos, 0.0) and np.isclose(new_pos, 0.0):
+            action = "CLOSE"
+        elif np.sign(prev_pos) != np.sign(new_pos):
+            action = "REVERSE"
+        else:
+            action = "ADJUST"
+
+        records.append(
+            {
+                "date": row["date"],
+                "action": action,
+                "from_position": prev_pos,
+                "to_position": new_pos,
+                "prediction": float(row["prediction"]),
+                "price": float(price_series.iloc[i]) if price_series is not None and pd.notna(price_series.iloc[i]) else np.nan,
+                "pnl": float(row["pnl"]),
+                "equity": float(row.get("equity", np.nan)),
+            }
+        )
+        prev_pos = new_pos
+
+    return pd.DataFrame(records)
+
+
 @dataclass
 class BacktestPlatform:
     """Complete backtest platform wrapper."""
@@ -84,10 +142,26 @@ class BacktestPlatform:
     train_window: int = 120
     test_window: int = 20
 
-    def run(self, predictions: pd.Series, returns: pd.Series) -> pd.DataFrame:
+    def run(
+        self,
+        predictions: pd.Series,
+        returns: pd.Series,
+        start_date: str | pd.Timestamp | None = None,
+    ) -> pd.DataFrame:
         return walk_forward_backtest(
             predictions=predictions,
             returns=returns,
             train_window=self.train_window,
             test_window=self.test_window,
+            start_date=start_date,
         )
+
+    def run_with_trade_records(
+        self,
+        predictions: pd.Series,
+        returns: pd.Series,
+        prices: pd.Series | None = None,
+        start_date: str | pd.Timestamp | None = None,
+    ) -> tuple[pd.DataFrame, pd.DataFrame]:
+        daily = self.run(predictions=predictions, returns=returns, start_date=start_date)
+        return daily, trade_records(daily, prices=prices)

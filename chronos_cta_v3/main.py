@@ -58,7 +58,56 @@ def run() -> pd.DataFrame:
         close = df["close"].dropna()
         factor_mat = df[feats].fillna(0)
         chronos_pred = chronos.predict(close, factor_mat, PRED_LEN)
-        chronos_alpha = float((chronos_pred.mean() - chronos_pred[0]) / chronos_pred[0])
+        
+        # ========== 修复后的 chronos_alpha 计算 ==========
+        # 健壮处理，兼容标量、数组、numpy数组、张量等
+        # ========== 修复后的 chronos_alpha 计算 ==========
+        # 健壮处理，兼容标量、数组、numpy数组、张量等
+        if hasattr(chronos_pred, '__len__') and len(chronos_pred) > 0:
+            # 提取base_value并确保是标量（处理嵌套数组/张量/多维数组）
+            base_value = chronos_pred[0]
+            
+            # 步骤1：处理numpy/torch张量/数组（兼容多维）
+            if hasattr(base_value, 'item'):
+                # 先展平数组/张量，再取第一个元素（避免多维/多元素问题）
+                if base_value.size > 1:
+                    base_value = base_value.flatten()[0]  # 展平后取第一个元素
+                base_value = base_value.item()  # 转Python标量
+            # 步骤2：处理列表/元组（兼容嵌套）
+            elif isinstance(base_value, (list, tuple)):
+                # 递归展平嵌套结构，取第一个非空元素
+                def flatten(x):
+                    for item in x:
+                        if isinstance(item, (list, tuple)):
+                            yield from flatten(item)
+                        else:
+                            yield item
+                flat_list = list(flatten(base_value))
+                base_value = flat_list[0] if flat_list else 0.0
+            # 步骤3：确保base_value是数值类型
+            base_value = float(base_value) if isinstance(base_value, (int, float)) else 0.0
+            
+            # 计算mean_value并确保是标量
+            if hasattr(chronos_pred, 'mean'):
+                mean_value = chronos_pred.mean()
+            else:
+                mean_value = sum(chronos_pred) / len(chronos_pred)
+            # 处理mean_value的数组/张量类型
+            if hasattr(mean_value, 'item'):
+                mean_value = mean_value.item()
+            mean_value = float(mean_value) if isinstance(mean_value, (int, float)) else 0.0
+            
+            # 除零保护 + 转换为标量
+            if abs(base_value) < 1e-8:  # 避免除以0
+                chronos_alpha = 0.0
+            else:
+                chronos_alpha = float((mean_value - base_value) / base_value)
+        elif isinstance(chronos_pred, (float, int)):
+            chronos_alpha = 0.0  # 若业务需要用pred值，可改为 chronos_alpha = float(chronos_pred)
+        else:
+            chronos_alpha = 0.0
+        # ========== 修复结束 ==========
+        # ========== 修复结束 ==========
 
         alpha, model_weights = bayesian_model_averaging(
             predictions={"chronos": chronos_alpha, "xgb": ml_pred},
@@ -88,6 +137,8 @@ def run() -> pd.DataFrame:
         )
         alpha_series[symbol] = df["target"].tail(60).reset_index(drop=True)
         return_series[symbol] = df["target"].tail(60).reset_index(drop=True)
+
+    # 后续代码不变...
 
     out = pd.DataFrame(records)
     if out.empty:

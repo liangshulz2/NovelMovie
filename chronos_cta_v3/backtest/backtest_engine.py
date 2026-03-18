@@ -17,8 +17,8 @@ def backtest(returns: pd.Series, positions: pd.Series) -> pd.Series:
 def auto_generate_strategy(predictions: pd.Series, threshold: float = 0.0) -> pd.Series:
     """Auto strategy generation from alpha predictions."""
     pos = pd.Series(0, index=predictions.index, dtype=float)
-    pos[predictions > threshold] = 1.0
-    pos[predictions < -threshold] = -1.0
+    pos[predictions > threshold] = 1.0 # 看多信号>阈值 → 做多
+    pos[predictions < -threshold] = -1.0 # 看空信号<-阈值 → 做空
     return pos
 
 
@@ -92,11 +92,11 @@ def trade_records(daily: pd.DataFrame, prices: pd.Series | None = None) -> pd.Da
                 "date",
                 "action",
                 "from_position",
-                "to_position",
+                "to_position每日持仓头寸（1 = 做多，-1 = 做空，0 = 空仓）",
                 "prediction",
                 "price",
-                "pnl",
-                "equity",
+                "pnl策略盈亏",
+                "equity累计净值",
             ]
         )
 
@@ -110,24 +110,24 @@ def trade_records(daily: pd.DataFrame, prices: pd.Series | None = None) -> pd.Da
             continue
 
         if np.isclose(prev_pos, 0.0) and not np.isclose(new_pos, 0.0):
-            action = "OPEN"
+            action = "OPEN从空仓→多 / 空（首次开仓"
         elif not np.isclose(prev_pos, 0.0) and np.isclose(new_pos, 0.0):
-            action = "CLOSE"
+            action = "CLOSE从多 / 空→空仓（平仓）"
         elif np.sign(prev_pos) != np.sign(new_pos):
-            action = "REVERSE"
+            action = "REVERSE头寸方向反转（多→空 / 空→多）"
         else:
-            action = "ADJUST"
+            action = "ADJUST同方向头寸调整（比如从 1→0.5，非核心操作）"
 
         records.append(
             {
                 "date": row["date"],
                 "action": action,
                 "from_position": prev_pos,
-                "to_position": new_pos,
+                "to_position每日持仓头寸（1 = 做多，-1 = 做空，0 = 空仓）": new_pos,
                 "prediction": float(row["prediction"]),
                 "price": float(price_series.iloc[i]) if price_series is not None and pd.notna(price_series.iloc[i]) else np.nan,
-                "pnl": float(row["pnl"]),
-                "equity": float(row.get("equity", np.nan)),
+                "pnl策略盈亏": float(row["pnl"]),
+                "equity累计净值": float(row.get("equity", np.nan)),
             }
         )
         prev_pos = new_pos

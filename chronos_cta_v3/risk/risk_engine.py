@@ -11,6 +11,11 @@ def portfolio_risk(
     vols: pd.Series | None = None,
     cov_matrix: pd.DataFrame | None = None,
 ) -> float:
+    """Portfolio daily volatility in return units.
+
+    - With covariance: sqrt(w' Σ w)
+    - Without covariance: sqrt(sum((w_i * vol_i)^2))
+    """
     weights = positions.astype(float).fillna(0.0)
     if cov_matrix is not None and not cov_matrix.empty:
         cov = cov_matrix.reindex(index=weights.index, columns=weights.index).fillna(0.0)
@@ -18,7 +23,8 @@ def portfolio_risk(
 
     if vols is None:
         return 0.0
-    return float(np.sum(np.abs(weights.values) * vols.reindex(weights.index).fillna(0.0).values))
+    aligned_vols = vols.reindex(weights.index).fillna(0.0).astype(float)
+    return float(np.sqrt(np.sum((weights.values * aligned_vols.values) ** 2)))
 
 
 def leverage(positions: pd.Series) -> float:

@@ -3,7 +3,8 @@
 import numpy as np
 
 
-def volatility_target(alpha: float, vol: float, target: float) -> float:
+def volatility_target(vol: float, target: float) -> float:
+    """Convert volatility estimate to a base position under target-vol scaling."""
     if vol <= 0:
         return 0.0
     return target / vol

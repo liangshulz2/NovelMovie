@@ -55,13 +55,17 @@ pip install -r requirements.txt
 
 ### 2.2 模型准备
 
-在 `chronos_cta_v3/config.py` 中设置 Chronos 模型路径（`MODEL_PATH`）：
+建议通过 `.env` 或系统环境变量配置（示例）：
 
-```python
-MODEL_PATH = os.getenv("CHRONOS_MODEL_PATH", "E:/ai/chronos-2")
+```bash
+export CHRONOS_MODEL_PATH=./models/chronos-2
+export CHRONOS_DEVICE=cpu
+export CHRONOS_SYMBOLS=RB0,SA0,FG0,CU0
+export CHRONOS_COMMISSION=0.0002
+export CHRONOS_SLIPPAGE=0.0003
 ```
 
-确保该路径下存在可用的 Chronos 模型文件。
+确保 `CHRONOS_MODEL_PATH` 指向可用的 Chronos 模型目录。
 
 ---
 
@@ -85,13 +89,12 @@ MODEL_PATH = os.getenv("CHRONOS_MODEL_PATH", "E:/ai/chronos-2")
 
 ## 4. 运行主程序
 
-### 4.1 命令行运行
+### 4.1 命令行运行（推荐统一入口）
 
 在项目根目录执行：
 
 ```bash
-cd chronos_cta_v3
-python main.py
+python -m chronos_cta_v3.main
 ```
 
 程序会输出每个可交易品种的结果（如 `alpha`、`signal`、`position`、`notional`、止损止盈价格等）。
@@ -99,7 +102,7 @@ python main.py
 ### 4.2 在代码中调用
 
 ```python
-from main import run
+from chronos_cta_v3.main import run
 
 result = run()
 print(result)
@@ -122,7 +125,7 @@ print(result)
 
 ```python
 import pandas as pd
-from backtest.backtest_engine import backtest
+from chronos_cta_v3.backtest.backtest_engine import backtest
 
 idx = pd.date_range("2024-01-01", periods=6, freq="D")
 returns = pd.Series([0.01, -0.005, 0.003, 0.0, 0.004, -0.002], index=idx)
@@ -139,7 +142,7 @@ print(equity)
 
 ```python
 import pandas as pd
-from backtest.backtest_engine import auto_generate_strategy, optimize_signal_threshold
+from chronos_cta_v3.backtest.backtest_engine import auto_generate_strategy, optimize_signal_threshold
 
 idx = pd.date_range("2024-01-01", periods=8, freq="D")
 pred = pd.Series([0.01, 0.02, -0.01, -0.03, 0.005, 0.006, -0.007, 0.0], index=idx)
@@ -160,7 +163,7 @@ print(positions)
 ```python
 import numpy as np
 import pandas as pd
-from backtest.backtest_engine import walk_forward_backtest
+from chronos_cta_v3.backtest.backtest_engine import walk_forward_backtest
 
 idx = pd.date_range("2023-01-01", periods=260, freq="B")
 np.random.seed(42)
@@ -195,7 +198,7 @@ print("final equity:", daily["equity"].iloc[-1] if not daily.empty else None)
 ```python
 import numpy as np
 import pandas as pd
-from backtest.backtest_engine import BacktestPlatform
+from chronos_cta_v3.backtest.backtest_engine import BacktestPlatform
 
 idx = pd.date_range("2024-01-01", periods=200, freq="B")
 np.random.seed(7)
@@ -218,7 +221,7 @@ print(trades.head(10))
 ```
 
 `trades` 固定字段顺序：
-- `date`, `action`, `from_position`, `to_position`, `prediction`, `price`, `pnl`, `equity`
+- `date`, `action`, `from_position`, `to_position`, `prediction`, `price`, `exec_price`, `price_slippage`, `transaction_cost`, `pnl`, `equity`
 
 其中：
 - `action`：`OPEN` / `CLOSE` / `REVERSE` / `ADJUST`
@@ -238,7 +241,7 @@ print(trades.head(10))
 然后直接调用：
 
 ```python
-from backtest.backtest_engine import BacktestPlatform
+from chronos_cta_v3.backtest.backtest_engine import BacktestPlatform
 
 bt = BacktestPlatform(train_window=120, test_window=20)
 daily, trades = bt.run_with_trade_records(predictions, returns, prices)

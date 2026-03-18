@@ -15,13 +15,29 @@ TRADE_COLUMNS = [
     "to_position",
     "prediction",
     "price",
+    "exec_price",
+    "price_slippage",
+    "transaction_cost",
     "pnl",
     "equity",
 ]
 
 
-def backtest(returns: pd.Series, positions: pd.Series) -> pd.Series:
-    pnl = returns.fillna(0) * positions.shift(1).fillna(0)
+def backtest(
+    returns: pd.Series,
+    positions: pd.Series,
+    commission: float = 0.0,
+    slippage: float = 0.0,
+) -> pd.Series:
+    """Simple backtest with optional transaction costs."""
+    aligned_returns = returns.fillna(0).astype(float)
+    aligned_pos = positions.reindex(aligned_returns.index).fillna(0).astype(float)
+
+    prev_pos = aligned_pos.shift(1).fillna(0)
+    turnover = (aligned_pos - prev_pos).abs()
+    cost_rate = float(max(commission, 0.0) + max(slippage, 0.0))
+
+    pnl = aligned_returns * prev_pos - turnover * cost_rate
     equity = (1 + pnl).cumprod()
     return equity
 
@@ -58,8 +74,10 @@ def walk_forward_backtest(
     train_window: int = 120,
     test_window: int = 20,
     start_date: str | pd.Timestamp | None = None,
+    commission: float = 0.0,
+    slippage: float = 0.0,
 ) -> pd.DataFrame:
-    """Walk-forward backtest with automatic threshold re-fit per window."""
+    """Walk-forward backtest with threshold re-fit per window and cost model."""
     if start_date is not None:
         start_ts = pd.Timestamp(start_date)
         mask = predictions.index >= start_ts
@@ -68,6 +86,9 @@ def walk_forward_backtest(
 
     rows = []
     n = len(predictions)
+    cost_rate = float(max(commission, 0.0) + max(slippage, 0.0))
+    prev_position = 0.0
+
     for start in range(train_window, n, test_window):
         train_slice = slice(start - train_window, start)
         test_slice = slice(start, min(start + test_window, n))
@@ -75,20 +96,28 @@ def walk_forward_backtest(
         thr = optimize_signal_threshold(predictions.iloc[train_slice], returns.iloc[train_slice])
         test_pred = predictions.iloc[test_slice]
         test_ret = returns.iloc[test_slice]
-        pos = auto_generate_strategy(test_pred, threshold=thr)
-        pnl = test_ret.fillna(0) * pos.shift(1).fillna(0)
+        target_pos = auto_generate_strategy(test_pred, threshold=thr)
 
         for i in range(len(test_pred)):
+            desired_pos = float(target_pos.iloc[i])
+            turnover = abs(desired_pos - prev_position)
+            trading_cost = turnover * cost_rate
+            realized_pnl = float(test_ret.iloc[i]) * prev_position - trading_cost
+
             rows.append(
                 {
                     "date": test_pred.index[i],
                     "prediction": float(test_pred.iloc[i]),
-                    "position": float(pos.iloc[i]),
+                    "position": desired_pos,
+                    "prev_position": prev_position,
                     "return": float(test_ret.iloc[i]),
-                    "pnl": float(pnl.iloc[i]),
+                    "turnover": turnover,
+                    "cost": trading_cost,
+                    "pnl": realized_pnl,
                     "threshold": float(thr),
                 }
             )
+            prev_position = desired_pos
 
     out = pd.DataFrame(rows)
     if not out.empty:
@@ -96,7 +125,12 @@ def walk_forward_backtest(
     return out
 
 
-def trade_records(daily: pd.DataFrame, prices: pd.Series | None = None) -> pd.DataFrame:
+def trade_records(
+    daily: pd.DataFrame,
+    prices: pd.Series | None = None,
+    commission: float = 0.0,
+    slippage: float = 0.0,
+) -> pd.DataFrame:
     """Generate trade records from a backtest daily dataframe."""
     if daily.empty:
         return pd.DataFrame(columns=TRADE_COLUMNS)
@@ -104,6 +138,7 @@ def trade_records(daily: pd.DataFrame, prices: pd.Series | None = None) -> pd.Da
     records = []
     prev_pos = 0.0
     price_series = prices.reindex(daily["date"]).astype(float) if prices is not None else None
+    cost_rate = float(max(commission, 0.0) + max(slippage, 0.0))
 
     for i, row in daily.iterrows():
         new_pos = float(row["position"])
@@ -119,6 +154,12 @@ def trade_records(daily: pd.DataFrame, prices: pd.Series | None = None) -> pd.Da
         else:
             action = "ADJUST"
 
+        raw_price = float(price_series.iloc[i]) if price_series is not None and pd.notna(price_series.iloc[i]) else np.nan
+        price_slippage = abs(raw_price) * float(max(slippage, 0.0)) if pd.notna(raw_price) else np.nan
+        exec_price = raw_price + np.sign(new_pos - prev_pos) * price_slippage if pd.notna(raw_price) else np.nan
+        turnover = abs(new_pos - prev_pos)
+        transaction_cost = turnover * cost_rate
+
         records.append(
             {
                 "date": row["date"],
@@ -126,7 +167,10 @@ def trade_records(daily: pd.DataFrame, prices: pd.Series | None = None) -> pd.Da
                 "from_position": prev_pos,
                 "to_position": new_pos,
                 "prediction": float(row["prediction"]),
-                "price": float(price_series.iloc[i]) if price_series is not None and pd.notna(price_series.iloc[i]) else np.nan,
+                "price": raw_price,
+                "exec_price": exec_price,
+                "price_slippage": price_slippage,
+                "transaction_cost": transaction_cost,
                 "pnl": float(row["pnl"]),
                 "equity": float(row.get("equity", np.nan)),
             }
@@ -142,6 +186,8 @@ class BacktestPlatform:
 
     train_window: int = 120
     test_window: int = 20
+    commission: float = 0.0
+    slippage: float = 0.0
 
     def run(
         self,
@@ -155,6 +201,8 @@ class BacktestPlatform:
             train_window=self.train_window,
             test_window=self.test_window,
             start_date=start_date,
+            commission=self.commission,
+            slippage=self.slippage,
         )
 
     def run_with_trade_records(
@@ -165,4 +213,4 @@ class BacktestPlatform:
         start_date: str | pd.Timestamp | None = None,
     ) -> tuple[pd.DataFrame, pd.DataFrame]:
         daily = self.run(predictions=predictions, returns=returns, start_date=start_date)
-        return daily, trade_records(daily, prices=prices)
+        return daily, trade_records(daily, prices=prices, commission=self.commission, slippage=self.slippage)

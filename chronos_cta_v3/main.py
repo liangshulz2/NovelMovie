@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from config import (
+from chronos_cta_v3.config import (
     CAPITAL,
     DEVICE,
     LOOKBACK,
@@ -17,17 +17,17 @@ from config import (
     SYMBOLS,
     TARGET_VOL,
 )
-from data.futures_loader import load_futures
-from factors.factor_library import compute_factors
-from factors.factor_selector import select_features
-from model.chronos_model import ChronosModel
-from model.ensemble_model import bayesian_model_averaging
-from model.xgb_model import XGBModel
-from alpha.alpha_engine import generate_signal
-from portfolio.portfolio_engine import final_position, kelly_scale, volatility_target
-from portfolio.risk_parity import apply_risk_budget
-from portfolio.optimizer import correlation_matrix, optimize_portfolio
-from risk.risk_engine import portfolio_risk
+from chronos_cta_v3.data.futures_loader import load_futures
+from chronos_cta_v3.factors.factor_library import compute_factors
+from chronos_cta_v3.factors.factor_selector import select_features
+from chronos_cta_v3.model.chronos_model import ChronosModel
+from chronos_cta_v3.model.ensemble_model import bayesian_model_averaging
+from chronos_cta_v3.model.xgb_model import XGBModel
+from chronos_cta_v3.alpha.alpha_engine import generate_signal
+from chronos_cta_v3.portfolio.portfolio_engine import final_position, kelly_scale, volatility_target
+from chronos_cta_v3.portfolio.risk_parity import apply_risk_budget
+from chronos_cta_v3.portfolio.optimizer import correlation_matrix, optimize_portfolio
+from chronos_cta_v3.risk.risk_engine import portfolio_risk
 
 
 def _to_1d_array(pred) -> np.ndarray:
@@ -125,7 +125,7 @@ def run() -> pd.DataFrame:
         latest_close = float(df["close"].iloc[-1])
         vol = float(df["vol20"].iloc[-1]) if "vol20" in df.columns else float(df["close"].pct_change().rolling(20).std().iloc[-1])
         atr14 = float(df["atr14"].iloc[-1]) if "atr14" in df.columns and pd.notna(df["atr14"].iloc[-1]) else latest_close * max(vol, 0.005)
-        base = volatility_target(alpha, vol, TARGET_VOL)
+        base = volatility_target(vol, TARGET_VOL)
         kelly = kelly_scale(alpha, vol)
         position = final_position(signal, base, kelly, MAX_POSITION)
 
@@ -167,13 +167,21 @@ def run() -> pd.DataFrame:
         out["risk_parity_weight"] = out["symbol"].map(rp_w).fillna(0.0)
         out["corr_avg"] = out["symbol"].map(corr.mean()).fillna(0.0)
         out["position"] = out["position"] * (0.5 + out["risk_parity_weight"])
+        out["position"] = apply_risk_budget(
+            out.set_index("symbol")["position"],
+            out.set_index("symbol")["vol20"],
+            MAX_PORTFOLIO_RISK,
+            cov_matrix=cov_df,
+        ).values
 
     out["notional"] = out["position"] * CAPITAL
+    using_cov = not cov_df.empty
     out["portfolio_risk"] = portfolio_risk(
         out.set_index("symbol")["position"],
         out.set_index("symbol")["vol20"],
-        cov_matrix=cov_df if not cov_df.empty else None,
+        cov_matrix=cov_df if using_cov else None,
     )
+    out["portfolio_risk_method"] = "covariance" if using_cov else "diag_vol"
     return out
 
 

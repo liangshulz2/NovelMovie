@@ -4,17 +4,16 @@ from __future__ import annotations
 
 import os
 
-SYMBOLS = [
-    "RB0",
-    "SA0",
-    "FG0",
-    "CU0",
-    "AL0",
-    "M0",
-    "Y0",
-]
 
-MODEL_PATH = os.getenv("CHRONOS_MODEL_PATH", "E:/ai/chronos-2")
+def _parse_symbols() -> list[str]:
+    symbols_raw = os.getenv("CHRONOS_SYMBOLS", "RB0,SA0,FG0,CU0,AL0,M0,Y0")
+    return [s.strip() for s in symbols_raw.split(",") if s.strip()]
+
+
+SYMBOLS = _parse_symbols()
+
+# Use environment variable if provided; otherwise a safe relative default.
+MODEL_PATH = os.getenv("CHRONOS_MODEL_PATH", "./models/chronos-2")
 DEVICE = os.getenv("CHRONOS_DEVICE", "cpu")
 PRED_LEN = int(os.getenv("CHRONOS_PRED_LEN", "10"))
 
@@ -28,3 +27,7 @@ LOOKBACK = int(os.getenv("CHRONOS_LOOKBACK", "260"))
 TRAIN_WINDOW = int(os.getenv("CHRONOS_TRAIN_WINDOW", "360"))
 MIN_HISTORY = int(os.getenv("CHRONOS_MIN_HISTORY", "120"))
 SEED = int(os.getenv("CHRONOS_SEED", "42"))
+
+# Backtest cost model defaults (one-way rates).
+COMMISSION = float(os.getenv("CHRONOS_COMMISSION", "0.0002"))
+SLIPPAGE = float(os.getenv("CHRONOS_SLIPPAGE", "0.0003"))

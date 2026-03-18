@@ -5,6 +5,8 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+from chronos_cta_v3.risk.risk_engine import portfolio_risk
+
 
 def inverse_vol_weights(vols: pd.Series, min_vol: float = 1e-6) -> pd.Series:
     clipped = vols.clip(lower=min_vol)
@@ -39,8 +41,14 @@ def risk_parity_weights(cov: pd.DataFrame, max_iter: int = 500, tol: float = 1e-
     return pd.Series(w, index=cov.index)
 
 
-def apply_risk_budget(raw_positions: pd.Series, vols: pd.Series, max_portfolio_risk: float) -> pd.Series:
-    total_risk = np.sum(np.abs(raw_positions.values) * vols.values)
+def apply_risk_budget(
+    raw_positions: pd.Series,
+    vols: pd.Series,
+    max_portfolio_risk: float,
+    cov_matrix: pd.DataFrame | None = None,
+) -> pd.Series:
+    """Scale positions to satisfy a portfolio-risk cap under consistent risk units."""
+    total_risk = portfolio_risk(raw_positions, vols=vols, cov_matrix=cov_matrix)
     if total_risk <= max_portfolio_risk or total_risk <= 0:
         return raw_positions
     scale = max_portfolio_risk / total_risk

@@ -68,8 +68,16 @@ def compute_factors(df: pd.DataFrame) -> pd.DataFrame:
     features["month"] = d["date"].dt.month
     features["dayofweek"] = d["date"].dt.dayofweek
     features["weekofyear"] = d["date"].dt.isocalendar().week.astype(float)
-    features["seasonality_month_mean"] = ret1.groupby(features["month"]).transform("mean")
-    features["seasonality_dow_mean"] = ret1.groupby(features["dayofweek"]).transform("mean")
+    # IMPORTANT: only use historical observations (shifted expanding mean) to avoid look-ahead bias.
+    month_group = ret1.groupby(features["month"])
+    month_hist_sum = month_group.cumsum() - ret1.fillna(0)
+    month_hist_count = month_group.cumcount()
+    features["seasonality_month_mean"] = month_hist_sum / month_hist_count.replace(0, np.nan)
+
+    dow_group = ret1.groupby(features["dayofweek"])
+    dow_hist_sum = dow_group.cumsum() - ret1.fillna(0)
+    dow_hist_count = dow_group.cumcount()
+    features["seasonality_dow_mean"] = dow_hist_sum / dow_hist_count.replace(0, np.nan)
     features["turn_of_month"] = ((d["date"].dt.day <= 3) | (d["date"].dt.day >= 27)).astype(float)
 
     # Oscillator family (9)

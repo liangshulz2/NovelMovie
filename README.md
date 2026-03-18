@@ -43,7 +43,7 @@ chronos_cta_v3/
 在项目根目录执行：
 
 ```bash
-pip install numpy pandas akshare xgboost torch chronos-forecasting
+pip install -r requirements.txt
 ```
 
 > 说明：
@@ -58,7 +58,7 @@ pip install numpy pandas akshare xgboost torch chronos-forecasting
 在 `chronos_cta_v3/config.py` 中设置 Chronos 模型路径（`MODEL_PATH`）：
 
 ```python
-MODEL_PATH = "E:/ai/chronos-2"
+MODEL_PATH = os.getenv("CHRONOS_MODEL_PATH", "E:/ai/chronos-2")
 ```
 
 确保该路径下存在可用的 Chronos 模型文件。
@@ -70,7 +70,7 @@ MODEL_PATH = "E:/ai/chronos-2"
 关键参数位于 `chronos_cta_v3/config.py`：
 
 - `SYMBOLS`：要交易/研究的品种代码列表（例如 `RB0`, `CU0`）。
-- `MODEL_PATH`：Chronos 模型路径。
+- `MODEL_PATH`：Chronos 模型路径（支持环境变量 `CHRONOS_MODEL_PATH` 覆盖）。
 - `DEVICE`：`cpu` 或 `cuda`。
 - `PRED_LEN`：预测步长。
 - `TARGET_VOL`：目标波动率（用于波动率目标仓位）。
@@ -217,7 +217,10 @@ print("trade records:")
 print(trades.head(10))
 ```
 
-`trades` 常见字段：
+`trades` 固定字段顺序：
+- `date`, `action`, `from_position`, `to_position`, `prediction`, `price`, `pnl`, `equity`
+
+其中：
 - `action`：`OPEN` / `CLOSE` / `REVERSE` / `ADJUST`
 - `from_position`、`to_position`：仓位变化
 - `prediction`、`price`：触发当时的预测和价格

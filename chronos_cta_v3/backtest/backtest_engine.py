@@ -8,6 +8,18 @@ import numpy as np
 import pandas as pd
 
 
+TRADE_COLUMNS = [
+    "date",
+    "action",
+    "from_position",
+    "to_position",
+    "prediction",
+    "price",
+    "pnl",
+    "equity",
+]
+
+
 def backtest(returns: pd.Series, positions: pd.Series) -> pd.Series:
     pnl = returns.fillna(0) * positions.shift(1).fillna(0)
     equity = (1 + pnl).cumprod()
@@ -17,8 +29,8 @@ def backtest(returns: pd.Series, positions: pd.Series) -> pd.Series:
 def auto_generate_strategy(predictions: pd.Series, threshold: float = 0.0) -> pd.Series:
     """Auto strategy generation from alpha predictions."""
     pos = pd.Series(0, index=predictions.index, dtype=float)
-    pos[predictions > threshold] = 1.0 # 看多信号>阈值 → 做多
-    pos[predictions < -threshold] = -1.0 # 看空信号<-阈值 → 做空
+    pos[predictions > threshold] = 1.0
+    pos[predictions < -threshold] = -1.0
     return pos
 
 
@@ -87,18 +99,7 @@ def walk_forward_backtest(
 def trade_records(daily: pd.DataFrame, prices: pd.Series | None = None) -> pd.DataFrame:
     """Generate trade records from a backtest daily dataframe."""
     if daily.empty:
-        return pd.DataFrame(
-            columns=[
-                "date",
-                "action",
-                "from_position",
-                "to_position每日持仓头寸（1 = 做多，-1 = 做空，0 = 空仓）",
-                "prediction",
-                "price",
-                "pnl策略盈亏",
-                "equity累计净值",
-            ]
-        )
+        return pd.DataFrame(columns=TRADE_COLUMNS)
 
     records = []
     prev_pos = 0.0
@@ -110,29 +111,29 @@ def trade_records(daily: pd.DataFrame, prices: pd.Series | None = None) -> pd.Da
             continue
 
         if np.isclose(prev_pos, 0.0) and not np.isclose(new_pos, 0.0):
-            action = "OPEN从空仓→多 / 空（首次开仓"
+            action = "OPEN"
         elif not np.isclose(prev_pos, 0.0) and np.isclose(new_pos, 0.0):
-            action = "CLOSE从多 / 空→空仓（平仓）"
+            action = "CLOSE"
         elif np.sign(prev_pos) != np.sign(new_pos):
-            action = "REVERSE头寸方向反转（多→空 / 空→多）"
+            action = "REVERSE"
         else:
-            action = "ADJUST同方向头寸调整（比如从 1→0.5，非核心操作）"
+            action = "ADJUST"
 
         records.append(
             {
                 "date": row["date"],
                 "action": action,
                 "from_position": prev_pos,
-                "to_position每日持仓头寸（1 = 做多，-1 = 做空，0 = 空仓）": new_pos,
+                "to_position": new_pos,
                 "prediction": float(row["prediction"]),
                 "price": float(price_series.iloc[i]) if price_series is not None and pd.notna(price_series.iloc[i]) else np.nan,
-                "pnl策略盈亏": float(row["pnl"]),
-                "equity累计净值": float(row.get("equity", np.nan)),
+                "pnl": float(row["pnl"]),
+                "equity": float(row.get("equity", np.nan)),
             }
         )
         prev_pos = new_pos
 
-    return pd.DataFrame(records)
+    return pd.DataFrame(records, columns=TRADE_COLUMNS)
 
 
 @dataclass

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 
 from config import (
@@ -29,22 +30,76 @@ from portfolio.optimizer import correlation_matrix, optimize_portfolio
 from risk.risk_engine import portfolio_risk
 
 
+def _to_1d_array(pred) -> np.ndarray:
+    if hasattr(pred, "detach"):
+        pred = pred.detach().cpu().numpy()
+    elif hasattr(pred, "cpu") and hasattr(pred, "numpy"):
+        pred = pred.cpu().numpy()
+    arr = np.asarray(pred, dtype=float)
+    return np.ravel(arr)
+
+
+def _compute_chronos_alpha(pred) -> float:
+    arr = _to_1d_array(pred)
+    if arr.size == 0:
+        return 0.0
+    first = float(arr[0])
+    if arr.size == 1:
+        return first
+    denom = abs(first)
+    if denom < 1e-8:
+        return 0.0
+    return float((arr.mean() - first) / denom)
+
+
+def _compute_oos_mae(
+    model_df: pd.DataFrame,
+    feats: list[str],
+    chronos: ChronosModel,
+    xgb: XGBModel,
+    oos_window: int = 20,
+) -> tuple[float, float]:
+    if len(model_df) < max(MIN_HISTORY, oos_window + 2):
+        target_last = float(model_df["target"].iloc[-1])
+        return abs(target_last) + 1e-6, abs(target_last) + 1e-6
+
+    chronos_errors: list[float] = []
+    xgb_errors: list[float] = []
+    start_idx = len(model_df) - oos_window - 1
+
+    for i in range(start_idx, len(model_df) - 1):
+        train = model_df.iloc[: i + 1]
+        true_y = float(model_df["target"].iloc[i + 1])
+
+        xgb.fit(train[feats], train["target"])
+        xgb_pred = float(xgb.predict(model_df[feats].iloc[[i + 1]])[0])
+        xgb_errors.append(abs(true_y - xgb_pred))
+
+        close_hist = train["close"] if "close" in train.columns else train.index.to_series().astype(float)
+        factor_hist = train[feats].fillna(0)
+        chronos_pred = chronos.predict(close_hist, factor_hist, pred_len=PRED_LEN)
+        chronos_alpha = _compute_chronos_alpha(chronos_pred)
+        chronos_errors.append(abs(true_y - chronos_alpha))
+
+    return float(np.mean(chronos_errors) + 1e-6), float(np.mean(xgb_errors) + 1e-6)
+
+
 def run() -> pd.DataFrame:
     chronos = ChronosModel(MODEL_PATH, DEVICE)
     xgb = XGBModel()
 
     records = []
-    alpha_series = {}
-    return_series = {}
+    returns_history = {}
 
     for symbol in SYMBOLS:
-        df = compute_factors(load_futures(symbol)).tail(LOOKBACK).copy()
+        raw_df = load_futures(symbol)
+        df = compute_factors(raw_df).tail(LOOKBACK).copy()
         if len(df) < MIN_HISTORY:
             continue
 
         df["target"] = df["close"].pct_change().shift(-1)
         feats = select_features(df.dropna(), "target", top_n=30)
-        model_df = df[[*feats, "target"]].dropna()
+        model_df = df[["close", *feats, "target"]].dropna()
         if len(model_df) < MIN_HISTORY:
             continue
 
@@ -55,66 +110,15 @@ def run() -> pd.DataFrame:
         xgb.fit(x_train, y_train)
         ml_pred = float(xgb.predict(x_test)[0])
 
-        close = df["close"].dropna()
-        factor_mat = df[feats].fillna(0)
+        close = model_df["close"].dropna()
+        factor_mat = model_df[feats].fillna(0)
         chronos_pred = chronos.predict(close, factor_mat, PRED_LEN)
-        
-        # ========== 修复后的 chronos_alpha 计算 ==========
-        # 健壮处理，兼容标量、数组、numpy数组、张量等
-        # ========== 修复后的 chronos_alpha 计算 ==========
-        # 健壮处理，兼容标量、数组、numpy数组、张量等
-        if hasattr(chronos_pred, '__len__') and len(chronos_pred) > 0:
-            # 提取base_value并确保是标量（处理嵌套数组/张量/多维数组）
-            base_value = chronos_pred[0]
-            
-            # 步骤1：处理numpy/torch张量/数组（兼容多维）
-            if hasattr(base_value, 'item'):
-                # 先展平数组/张量，再取第一个元素（避免多维/多元素问题）
-                if base_value.size > 1:
-                    base_value = base_value.flatten()[0]  # 展平后取第一个元素
-                base_value = base_value.item()  # 转Python标量
-            # 步骤2：处理列表/元组（兼容嵌套）
-            elif isinstance(base_value, (list, tuple)):
-                # 递归展平嵌套结构，取第一个非空元素
-                def flatten(x):
-                    for item in x:
-                        if isinstance(item, (list, tuple)):
-                            yield from flatten(item)
-                        else:
-                            yield item
-                flat_list = list(flatten(base_value))
-                base_value = flat_list[0] if flat_list else 0.0
-            # 步骤3：确保base_value是数值类型
-            base_value = float(base_value) if isinstance(base_value, (int, float)) else 0.0
-            
-            # 计算mean_value并确保是标量
-            if hasattr(chronos_pred, 'mean'):
-                mean_value = chronos_pred.mean()
-            else:
-                mean_value = sum(chronos_pred) / len(chronos_pred)
-            # 处理mean_value的数组/张量类型
-            if hasattr(mean_value, 'item'):
-                mean_value = mean_value.item()
-            mean_value = float(mean_value) if isinstance(mean_value, (int, float)) else 0.0
-            
-            # 除零保护 + 转换为标量
-            if abs(base_value) < 1e-8:  # 避免除以0
-                chronos_alpha = 0.0
-            else:
-                chronos_alpha = float((mean_value - base_value) / base_value)
-        elif isinstance(chronos_pred, (float, int)):
-            chronos_alpha = 0.0  # 若业务需要用pred值，可改为 chronos_alpha = float(chronos_pred)
-        else:
-            chronos_alpha = 0.0
-        # ========== 修复结束 ==========
-        # ========== 修复结束 ==========
+        chronos_alpha = _compute_chronos_alpha(chronos_pred)
 
+        chronos_mae, xgb_mae = _compute_oos_mae(model_df, feats, chronos, xgb)
         alpha, model_weights = bayesian_model_averaging(
             predictions={"chronos": chronos_alpha, "xgb": ml_pred},
-            errors={
-                "chronos": abs(float(model_df["target"].iloc[-1] - chronos_alpha)) + 1e-6,
-                "xgb": abs(float(model_df["target"].iloc[-1] - ml_pred)) + 1e-6,
-            },
+            errors={"chronos": chronos_mae, "xgb": xgb_mae},
         )
         signal = generate_signal(alpha)
 
@@ -142,10 +146,7 @@ def run() -> pd.DataFrame:
                 "target_price": target_price,
             }
         )
-        alpha_series[symbol] = df["target"].tail(60).reset_index(drop=True)
-        return_series[symbol] = df["target"].tail(60).reset_index(drop=True)
-
-    # 后续代码不变...
+        returns_history[symbol] = model_df["target"].tail(60).reset_index(drop=True)
 
     out = pd.DataFrame(records)
     if out.empty:
@@ -157,9 +158,11 @@ def run() -> pd.DataFrame:
         MAX_PORTFOLIO_RISK,
     ).values
 
-    ret_df = pd.DataFrame(return_series).dropna(how="all")
+    ret_df = pd.DataFrame(returns_history).dropna(how="all")
+    cov_df = pd.DataFrame()
     if not ret_df.empty and ret_df.shape[1] > 1:
         corr = correlation_matrix(ret_df)
+        cov_df = ret_df.cov()
         rp_w = optimize_portfolio(ret_df.fillna(0), method="risk_parity")
         out["risk_parity_weight"] = out["symbol"].map(rp_w).fillna(0.0)
         out["corr_avg"] = out["symbol"].map(corr.mean()).fillna(0.0)
@@ -167,7 +170,9 @@ def run() -> pd.DataFrame:
 
     out["notional"] = out["position"] * CAPITAL
     out["portfolio_risk"] = portfolio_risk(
-        out.set_index("symbol")["position"], out.set_index("symbol")["vol20"]
+        out.set_index("symbol")["position"],
+        out.set_index("symbol")["vol20"],
+        cov_matrix=cov_df if not cov_df.empty else None,
     )
     return out
 

@@ -1,29 +1,34 @@
+from __future__ import annotations
+
+import argparse
+import os
+
 import pandas as pd
-from data.futures_loader import load_futures
-from model.chronos_model import ChronosModel
-from model.xgb_model import XGBModel
-from model.ensemble_model import bayesian_model_averaging
+
 from alpha.alpha_engine import generate_signal
 from backtest.backtest_engine import BacktestPlatform
+from data.futures_loader import load_futures
 from factors.factor_library import compute_factors
 from factors.factor_selector import select_features
+from model.chronos_model import ChronosModel
+from model.ensemble_model import bayesian_model_averaging
+from model.xgb_model import XGBModel
 
-# ------------------- 参数 -------------------
-SYMBOLS = [
-    "RB0",
-    "SA0",
-    "FG0",
-    "CU0",
-    "AL0",
-    "M0",
-    "Y0",
-]
-start_date = "2025-08-01"
-end_date = "2026-03-18"
-MODEL_PATH = "E:/ai/chronos-2"
-DEVICE = "cpu"
-INITIAL_CAPITAL = 100000  # 可修改，例如 10 万元
+SYMBOLS = ["RB0", "SA0", "FG0", "CU0", "AL0", "M0", "Y0"]
+MODEL_PATH = os.getenv("CHRONOS_MODEL_PATH", "E:/ai/chronos-2")
+DEVICE = os.getenv("CHRONOS_DEVICE", "cpu")
+INITIAL_CAPITAL = 100000
 MIN_WINDOW = 21
+
+
+def _compute_chronos_alpha(pred) -> float:
+    arr = pd.Series(pred).astype(float).to_numpy().reshape(-1)
+    if arr.size == 0:
+        return 0.0
+    if arr.size == 1:
+        return float(arr[0])
+    first = float(arr[0])
+    return 0.0 if abs(first) < 1e-8 else float((arr.mean() - first) / abs(first))
 
 
 def generate_symbol_signals(
@@ -33,67 +38,68 @@ def generate_symbol_signals(
     start: str,
     end: str,
     min_window: int,
+    retrain_every: int = 5,
+    refit_features_every: int = 10,
 ) -> pd.DataFrame:
     """为单个期货品种生成信号与收益序列。"""
-    df = load_futures(symbol)
+    df = load_futures(symbol, start_date=start, end_date=end)
     df = df[(df["date"] >= start) & (df["date"] <= end)].reset_index(drop=True)
 
     if len(df) <= min_window:
         return pd.DataFrame(columns=["date", "signal", "ret", "close", "symbol"])
 
+    factor_df = compute_factors(df.copy())
+    factor_df["target"] = factor_df["close"].pct_change().shift(-1)
+
     signals = []
     aligned_dates = []
+    feats: list[str] = []
 
-    for i in range(min_window, len(df)):
-        hist = df.iloc[:i].copy()
-        hist = compute_factors(hist)
-        hist["target"] = hist["close"].pct_change().shift(-1)
-
+    for i in range(min_window, len(factor_df)):
+        hist = factor_df.iloc[:i].copy()
         clean_hist = hist.dropna(subset=["target"])
         if len(clean_hist) < 2:
             continue
 
-        feats = select_features(clean_hist, "target", top_n=30)
-        if not feats:
-            feats = ["close", "open", "high", "low", "volume"]
+        if (not feats) or ((i - min_window) % refit_features_every == 0):
+            feats = select_features(clean_hist, "target", top_n=30)
+            if not feats:
+                feats = ["close", "open", "high", "low", "volume"]
 
         model_df = clean_hist[[*feats, "target"]].dropna()
         if len(model_df) < 2:
             continue
 
-        x_train = model_df[feats].iloc[:-1]
-        y_train = model_df["target"].iloc[:-1]
-        x_test = model_df[feats].iloc[[-1]]
+        if (i - min_window) % retrain_every == 0:
+            x_train = model_df[feats].iloc[:-1]
+            y_train = model_df["target"].iloc[:-1]
+            xgb.fit(x_train.values, y_train.values)
 
-        xgb.fit(x_train.values, y_train.values)
+        x_test = model_df[feats].iloc[[-1]]
         ml_pred = float(xgb.predict(x_test.values)[0])
 
         close = hist["close"].dropna()
         factor_mat = hist[feats].fillna(0)
         chronos_pred = chronos.predict(close, factor_mat, 1)
-        chronos_alpha = (
-            float(chronos_pred[0])
-            if hasattr(chronos_pred, "__getitem__")
-            else float(chronos_pred)
-        )
+        chronos_alpha = _compute_chronos_alpha(chronos_pred)
 
-        target_last = model_df["target"].iloc[-1]
+        target_last = float(model_df["target"].iloc[-1])
         alpha, _ = bayesian_model_averaging(
             predictions={"chronos": chronos_alpha, "xgb": ml_pred},
             errors={
-                "chronos": abs(float(target_last - chronos_alpha)) + 1e-6,
-                "xgb": abs(float(target_last - ml_pred)) + 1e-6,
+                "chronos": abs(target_last - chronos_alpha) + 1e-6,
+                "xgb": abs(target_last - ml_pred) + 1e-6,
             },
         )
 
         signals.append(generate_signal(alpha))
-        aligned_dates.append(df.loc[i, "date"])
+        aligned_dates.append(factor_df.loc[i, "date"])
 
     if not signals:
         return pd.DataFrame(columns=["date", "signal", "ret", "close", "symbol"])
 
     out = (
-        df.loc[df["date"].isin(aligned_dates), ["date", "close"]]
+        factor_df.loc[factor_df["date"].isin(aligned_dates), ["date", "close"]]
         .copy()
         .sort_values("date")
         .reset_index(drop=True)
@@ -107,7 +113,11 @@ def generate_symbol_signals(
     return out
 
 
-def run_portfolio_backtest(initial_capital: float = INITIAL_CAPITAL) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+def run_portfolio_backtest(
+    initial_capital: float = INITIAL_CAPITAL,
+    start_date: str = "2025-08-01",
+    end_date: str = "2026-03-18",
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """组合回测：等权聚合每个品种的日度 PnL。"""
     chronos = ChronosModel(MODEL_PATH, DEVICE)
     xgb = XGBModel()
@@ -144,14 +154,9 @@ def run_portfolio_backtest(initial_capital: float = INITIAL_CAPITAL) -> tuple[pd
 
     all_daily = pd.concat(symbol_daily, ignore_index=True)
 
-    # 组合层：按日期把各品种 PnL 做等权平均
     portfolio_daily = (
         all_daily.groupby("date", as_index=False)
-        .agg(
-            symbols=("symbol", "nunique"),
-            avg_pnl=("pnl", "mean"),
-            avg_position=("position", "mean"),
-        )
+        .agg(symbols=("symbol", "nunique"), avg_pnl=("pnl", "mean"), avg_position=("position", "mean"))
         .sort_values("date")
     )
     portfolio_daily["equity"] = (1 + portfolio_daily["avg_pnl"]).cumprod()
@@ -162,13 +167,26 @@ def run_portfolio_backtest(initial_capital: float = INITIAL_CAPITAL) -> tuple[pd
     return portfolio_daily, all_daily, trades_all
 
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Run Chronos CTA portfolio backtest")
+    parser.add_argument("--start-date", default="2025-08-01", help="Backtest start date, e.g. 2025-08-01")
+    parser.add_argument("--end-date", default="2026-03-18", help="Backtest end date, e.g. 2026-03-18")
+    parser.add_argument("--initial-capital", type=float, default=INITIAL_CAPITAL)
+    return parser.parse_args()
+
+
 if __name__ == "__main__":
-    portfolio_daily, symbol_daily, trades = run_portfolio_backtest(initial_capital=INITIAL_CAPITAL)
+    args = parse_args()
+    portfolio_daily, symbol_daily, trades = run_portfolio_backtest(
+        initial_capital=args.initial_capital,
+        start_date=args.start_date,
+        end_date=args.end_date,
+    )
 
     if portfolio_daily.empty:
         print("组合回测无结果：请检查数据区间、品种数据或模型配置。")
     else:
-        print(f"组合回测资金：{INITIAL_CAPITAL:,.2f} 元")
+        print(f"组合回测资金：{args.initial_capital:,.2f} 元")
         print("\n组合每日结果（前 20 行）：")
         print(portfolio_daily.head(20).to_string(index=False))
 

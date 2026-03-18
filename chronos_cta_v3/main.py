@@ -14,8 +14,10 @@ from chronos_cta_v3.config import (
     MIN_HISTORY,
     MODEL_PATH,
     PRED_LEN,
+    SEED,
     SYMBOLS,
     TARGET_VOL,
+    runtime_config_summary,
 )
 from chronos_cta_v3.data.futures_loader import load_futures
 from chronos_cta_v3.factors.factor_library import compute_factors
@@ -58,6 +60,7 @@ def _compute_oos_mae(
     chronos: ChronosModel,
     xgb: XGBModel,
     oos_window: int = 20,
+    eval_step: int = 3,
 ) -> tuple[float, float]:
     if len(model_df) < max(MIN_HISTORY, oos_window + 2):
         target_last = float(model_df["target"].iloc[-1])
@@ -67,7 +70,7 @@ def _compute_oos_mae(
     xgb_errors: list[float] = []
     start_idx = len(model_df) - oos_window - 1
 
-    for i in range(start_idx, len(model_df) - 1):
+    for i in range(start_idx, len(model_df) - 1, max(1, eval_step)):
         train = model_df.iloc[: i + 1]
         true_y = float(model_df["target"].iloc[i + 1])
 
@@ -85,8 +88,22 @@ def _compute_oos_mae(
 
 
 def run() -> pd.DataFrame:
-    chronos = ChronosModel(MODEL_PATH, DEVICE)
-    xgb = XGBModel()
+    np.random.seed(SEED)
+    try:
+        import torch
+
+        torch.manual_seed(SEED)
+    except Exception:
+        pass
+    print(f"[Chronos CTA V3] Runtime config: {runtime_config_summary()}")
+    try:
+        chronos = ChronosModel(MODEL_PATH, DEVICE)
+    except Exception as exc:
+        raise RuntimeError(
+            "ChronosModel initialization failed. Please check CHRONOS_MODEL_PATH and CHRONOS_DEVICE. "
+            f"Current values: MODEL_PATH={MODEL_PATH}, DEVICE={DEVICE}."
+        ) from exc
+    xgb = XGBModel(random_state=SEED)
 
     records = []
     returns_history = {}
@@ -99,6 +116,11 @@ def run() -> pd.DataFrame:
 
         df["target"] = df["close"].pct_change().shift(-1)
         feats = select_features(df.dropna(), "target", top_n=30)
+        if not feats:
+            fallback_feats = [c for c in ["mom5", "vol20", "atr14"] if c in df.columns]
+            if not fallback_feats:
+                continue
+            feats = fallback_feats
         model_df = df[["close", *feats, "target"]].dropna()
         if len(model_df) < MIN_HISTORY:
             continue
@@ -173,6 +195,13 @@ def run() -> pd.DataFrame:
             MAX_PORTFOLIO_RISK,
             cov_matrix=cov_df,
         ).values
+    out["position"] = out["position"].clip(lower=-MAX_POSITION, upper=MAX_POSITION)
+    exceed_count = int((out["position"].abs() > (MAX_POSITION + 1e-12)).sum())
+    print(
+        f"[Chronos CTA V3] Post-risk position clip check: exceed_count={exceed_count}, "
+        f"max_abs_position={out['position'].abs().max():.6f}"
+    )
+    assert (out["position"].abs() <= (MAX_POSITION + 1e-12)).all(), "Position exceeds MAX_POSITION after final clip."
 
     out["notional"] = out["position"] * CAPITAL
     using_cov = not cov_df.empty

@@ -53,7 +53,22 @@ pip install -r requirements.txt
 
 如你的运行环境有 CUDA，可根据自身环境安装对应版本的 `torch`。
 
-### 2.2 模型准备
+### 2.2 安装后快速验证（建议首次必做）
+
+```bash
+python -V
+pip -V
+pip install -r requirements.txt
+pytest -q
+```
+
+若失败，请按下面顺序排查：
+- `python -V` 与 `pip -V` 显示的 Python 主版本是否一致（避免装到错误环境）；
+- 先升级打包工具：`python -m pip install -U pip setuptools wheel`；
+- 若 `torch`/`chronos-forecasting` 安装失败，先确认本机是否需要 CUDA 版本并按官方指引安装；
+- 若 `pytest -q` 失败，优先看首个报错模块并确认依赖是否完整安装。
+
+### 2.3 模型准备
 
 建议通过 `.env` 或系统环境变量配置（示例）：
 

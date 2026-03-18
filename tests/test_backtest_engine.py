@@ -62,3 +62,30 @@ def test_trade_records_empty_schema():
         "pnl",
         "equity",
     ]
+
+
+def test_walk_forward_backtest_reindex_missing_returns_fill_zero():
+    pred_idx = pd.date_range("2024-01-01", periods=6, freq="D")
+    ret_idx = pred_idx.delete(3)
+    predictions = pd.Series([0.1, 0.2, -0.1, 0.3, -0.2, 0.1], index=pred_idx)
+    returns = pd.Series([0.01, 0.02, 0.03, 0.01, -0.01], index=ret_idx)
+
+    daily = walk_forward_backtest(predictions, returns, train_window=2, test_window=2)
+    assert not daily.empty
+    # 2024-01-04 is missing in returns and should be filled to 0.
+    row = daily.loc[daily["date"] == pd.Timestamp("2024-01-04")]
+    assert not row.empty
+    assert float(row["return"].iloc[0]) == 0.0
+
+
+def test_walk_forward_backtest_rejects_duplicate_index():
+    idx = pd.to_datetime(["2024-01-01", "2024-01-01", "2024-01-02", "2024-01-03"])
+    predictions = pd.Series([0.1, 0.2, 0.3, 0.4], index=idx)
+    returns = pd.Series([0.01, 0.02, 0.01, 0.0], index=idx)
+
+    try:
+        walk_forward_backtest(predictions, returns, train_window=2, test_window=1)
+        raised = False
+    except ValueError as exc:
+        raised = "duplicated" in str(exc)
+    assert raised

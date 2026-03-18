@@ -31,3 +31,11 @@ SEED = int(os.getenv("CHRONOS_SEED", "42"))
 # Backtest cost model defaults (one-way rates).
 COMMISSION = float(os.getenv("CHRONOS_COMMISSION", "0.0002"))
 SLIPPAGE = float(os.getenv("CHRONOS_SLIPPAGE", "0.0003"))
+
+
+def runtime_config_summary() -> str:
+    """Human-readable runtime config summary for startup logs."""
+    return (
+        f"MODEL_PATH={MODEL_PATH}, DEVICE={DEVICE}, PRED_LEN={PRED_LEN}, "
+        f"SYMBOLS={','.join(SYMBOLS)}"
+    )

@@ -23,6 +23,15 @@ TRADE_COLUMNS = [
 ]
 
 
+def _validate_series_index(name: str, series: pd.Series) -> None:
+    if not isinstance(series.index, pd.DatetimeIndex):
+        return
+    if not series.index.is_monotonic_increasing:
+        raise ValueError(f"{name} index must be monotonic increasing.")
+    if series.index.has_duplicates:
+        raise ValueError(f"{name} index contains duplicated timestamps.")
+
+
 def backtest(
     returns: pd.Series,
     positions: pd.Series,
@@ -78,11 +87,18 @@ def walk_forward_backtest(
     slippage: float = 0.0,
 ) -> pd.DataFrame:
     """Walk-forward backtest with threshold re-fit per window and cost model."""
+    _validate_series_index("predictions", predictions)
+    _validate_series_index("returns", returns)
+    if isinstance(predictions.index, pd.DatetimeIndex) and isinstance(returns.index, pd.DatetimeIndex):
+        if str(predictions.index.tz) != str(returns.index.tz):
+            raise ValueError("predictions and returns index timezones are inconsistent.")
+
+    returns = returns.reindex(predictions.index).fillna(0.0)
     if start_date is not None:
         start_ts = pd.Timestamp(start_date)
         mask = predictions.index >= start_ts
         predictions = predictions.loc[mask]
-        returns = returns.loc[predictions.index]
+        returns = returns.reindex(predictions.index).fillna(0.0)
 
     rows = []
     n = len(predictions)

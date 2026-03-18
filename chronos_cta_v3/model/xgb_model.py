@@ -4,7 +4,7 @@ from xgboost import XGBRegressor
 
 
 class XGBModel:
-    def __init__(self):
+    def __init__(self, random_state: int = 42):
         self.model = XGBRegressor(
             n_estimators=200,
             max_depth=5,
@@ -12,7 +12,7 @@ class XGBModel:
             subsample=0.9,
             colsample_bytree=0.9,
             objective="reg:squarederror",
-            random_state=42,
+            random_state=random_state,
         )
 
     def fit(self, x, y):

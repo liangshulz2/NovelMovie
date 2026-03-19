@@ -6,14 +6,14 @@ import os
 
 
 def _parse_symbols() -> list[str]:
-    symbols_raw = os.getenv("CHRONOS_SYMBOLS", "RB0,SA0,FG0,CU0,AL0,M0,Y0")
+    symbols_raw = os.getenv("CHRONOS_SYMBOLS", "RB0,SA0,FG0,CU0,AL0,M0,Y0,MA0,V0,I0,AU0,AG0,ZC0,SR0,CF0,TA0,WH0")
     return [s.strip() for s in symbols_raw.split(",") if s.strip()]
 
 
 SYMBOLS = _parse_symbols()
 
 # Use environment variable if provided; otherwise a safe relative default.
-MODEL_PATH = os.getenv("CHRONOS_MODEL_PATH", "./models/chronos-2")
+MODEL_PATH = os.getenv("CHRONOS_MODEL_PATH", "E:/ai/chronos-2")
 DEVICE = os.getenv("CHRONOS_DEVICE", "cpu")
 PRED_LEN = int(os.getenv("CHRONOS_PRED_LEN", "10"))
 

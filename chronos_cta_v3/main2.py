@@ -11,7 +11,15 @@ import numpy as np
 import pandas as pd
 
 from chronos_cta_v3.backtest.backtest_engine import BacktestPlatform
-from chronos_cta_v3.config import COMMISSION, MIN_HISTORY, SLIPPAGE, SYMBOLS
+from chronos_cta_v3.config import (
+    COMMISSION,
+    MIN_HISTORY,
+    NO_TRADE_BAND,
+    POSITION_SMOOTHING,
+    REGIME_EVENT_POSITION_SCALE,
+    SLIPPAGE,
+    SYMBOLS,
+)
 from chronos_cta_v3.data.futures_loader import load_futures
 
 
@@ -80,7 +88,15 @@ def run_portfolio_backtest(
     if start_ts > end_ts:
         raise ValueError(f"start_date({start_date}) cannot be after end_date({end_date}).")
 
-    bt = BacktestPlatform(train_window=120, test_window=20, commission=COMMISSION, slippage=SLIPPAGE)
+    bt = BacktestPlatform(
+        train_window=120,
+        test_window=20,
+        commission=COMMISSION,
+        slippage=SLIPPAGE,
+        no_trade_band=NO_TRADE_BAND,
+        position_smoothing=POSITION_SMOOTHING,
+        regime_event_position_scale=REGIME_EVENT_POSITION_SCALE,
+    )
 
     symbol_frames: list[pd.DataFrame] = []
     port_pred_parts: list[pd.Series] = []

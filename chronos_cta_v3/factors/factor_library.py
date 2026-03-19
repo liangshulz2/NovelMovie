@@ -20,6 +20,10 @@ def compute_factors(df: pd.DataFrame) -> pd.DataFrame:
     open_ = d["open"].astype(float)
     volm = d.get("volume", pd.Series(np.nan, index=d.index)).astype(float)
     hold = d.get("hold", pd.Series(np.nan, index=d.index)).astype(float)
+    near_close = d.get("near_close", close).astype(float)
+    next_close = d.get("next_close", pd.Series(np.nan, index=d.index)).astype(float)
+    far_close = d.get("far_close", pd.Series(np.nan, index=d.index)).astype(float)
+    days_to_expiry = d.get("days_to_expiry", pd.Series(np.nan, index=d.index)).astype(float)
 
     ret1 = close.pct_change()
     tr = pd.concat(
@@ -149,6 +153,27 @@ def compute_factors(df: pd.DataFrame) -> pd.DataFrame:
     features["vol_term_zscore_60"] = (features["vol_term"] - features["vol_term"].rolling(60).mean()) / features[
         "vol_term"
     ].rolling(60).std()
+    features["rv_short_long_ratio"] = _safe_div(features["vol5"], features["vol20"])
+    features["atr_breakout_zscore"] = (
+        (features["atr14"] - features["atr14"].rolling(20).mean()) / features["atr14"].rolling(20).std()
+    )
+    jump_part = (open_ - close.shift(1)).abs()
+    range_part = (high - low).replace(0, np.nan)
+    features["vol_jump_ratio"] = _safe_div(jump_part, range_part).rolling(20).mean()
+
+    # Futures term structure / roll factors (degrades safely to NaN when curve data is unavailable)
+    annualizer = 365 / days_to_expiry.clip(lower=1)
+    spread_near_next = _safe_div(near_close - next_close, near_close)
+    spread_next_far = _safe_div(next_close - far_close, next_close)
+    features["roll_yield_annualized"] = spread_near_next * annualizer
+    features["curve_slope"] = spread_near_next
+    features["curve_curvature"] = spread_near_next - spread_next_far
+    features["carry_stability_20"] = _safe_div(
+        features["roll_yield_annualized"].rolling(20).mean(),
+        features["roll_yield_annualized"].rolling(20).std(),
+    )
+    spot_proxy = d.get("spot_proxy", pd.Series(np.nan, index=d.index)).astype(float)
+    features["basis_to_spot_proxy"] = _safe_div(near_close, spot_proxy) - 1
 
     # Open-interest structure (requires hold column from futures_loader; safely degrades to NaN if unavailable)
     hold_chg_1 = hold.pct_change()
@@ -163,6 +188,33 @@ def compute_factors(df: pd.DataFrame) -> pd.DataFrame:
     features["price_oi_div"] = ret20_z - oi20_z
     features["oi_beta_60"] = ret1.rolling(60).corr(hold_chg_1)
     features["vol_oi_sync_20"] = features["vol_chg_5"].rolling(20).corr(hold_chg_5)
+    features["price_up_oi_up"] = ((ret1 > 0) & (hold_chg_1 > 0)).astype(float)
+    features["price_up_oi_down"] = ((ret1 > 0) & (hold_chg_1 < 0)).astype(float)
+    features["price_down_oi_up"] = ((ret1 < 0) & (hold_chg_1 > 0)).astype(float)
+    oi_state = np.select(
+        [
+            (ret1 > 0) & (hold_chg_1 > 0),
+            (ret1 > 0) & (hold_chg_1 < 0),
+            (ret1 < 0) & (hold_chg_1 > 0),
+            (ret1 < 0) & (hold_chg_1 < 0),
+        ],
+        [1.0, 2.0, 3.0, 4.0],
+        default=np.nan,
+    )
+    oi_state_series = pd.Series(oi_state, index=d.index, dtype=float)
+    state_switch = oi_state_series.ne(oi_state_series.shift(1)).fillna(True).cumsum()
+    features["oi_regime_persist_10"] = oi_state_series.groupby(state_switch).cumcount() + 1
+
+    # Contract-roll / liquidity-shock controls
+    features["days_to_roll"] = days_to_expiry
+    features["roll_window_dummy"] = days_to_expiry.le(5).astype(float)
+    hold_mean_20 = hold.rolling(20).mean()
+    hold_std_20 = hold.rolling(20).std()
+    features["liquidity_shock"] = (
+        (features["vol_zscore_20"].fillna(0.0))
+        + ((hold - hold_mean_20) / hold_std_20.replace(0, np.nan)).fillna(0.0)
+    )
+    features["impact_proxy"] = _safe_div(features["hl_spread"], volm).rolling(20).mean()
 
     factor_df = pd.DataFrame(features, index=d.index)
     out = pd.concat([d, factor_df], axis=1)

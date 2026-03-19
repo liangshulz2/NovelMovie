@@ -59,6 +59,49 @@ def auto_generate_strategy(predictions: pd.Series, threshold: float = 0.0) -> pd
     return pos
 
 
+def classify_regime(
+    predictions: pd.Series,
+    returns: pd.Series,
+    vol_lookback: int = 20,
+    trend_lookback: int = 20,
+) -> pd.Series:
+    """Three-state regime classification: trend/range/event."""
+    aligned_ret = returns.reindex(predictions.index).fillna(0.0)
+    short_vol = aligned_ret.rolling(vol_lookback).std()
+    long_vol = aligned_ret.rolling(60).std()
+    vol_z = (short_vol - short_vol.rolling(60).mean()) / short_vol.rolling(60).std()
+    trend_stability = predictions.rolling(trend_lookback).mean() / short_vol.replace(0, np.nan)
+
+    regime = pd.Series("range", index=predictions.index, dtype=object)
+    regime[vol_z > 1.25] = "event"
+    regime[(regime != "event") & (trend_stability.abs() > 0.5)] = "trend"
+    return regime
+
+
+def apply_execution_controls(
+    target_pos: pd.Series,
+    prev_position: float = 0.0,
+    no_trade_band: float = 0.0,
+    position_smoothing: float = 1.0,
+) -> pd.Series:
+    """Apply no-trade band and EWMA-like position smoothing."""
+    out = pd.Series(index=target_pos.index, dtype=float)
+    last_pos = float(prev_position)
+    smooth = float(np.clip(position_smoothing, 0.0, 1.0))
+    band = float(max(no_trade_band, 0.0))
+
+    for idx, desired in target_pos.items():
+        desired = float(desired)
+        raw_new = smooth * desired + (1.0 - smooth) * last_pos
+        if abs(raw_new - last_pos) < band:
+            new_pos = last_pos
+        else:
+            new_pos = raw_new
+        out.loc[idx] = new_pos
+        last_pos = new_pos
+    return out
+
+
 def optimize_signal_threshold(predictions: pd.Series, returns: pd.Series, grid: list[float] | None = None) -> float:
     """Automatic parameter optimization via simple grid-search on Sharpe."""
     if grid is None:
@@ -85,6 +128,9 @@ def walk_forward_backtest(
     start_date: str | pd.Timestamp | None = None,
     commission: float = 0.0,
     slippage: float = 0.0,
+    no_trade_band: float = 0.0,
+    position_smoothing: float = 1.0,
+    regime_event_position_scale: float = 0.5,
 ) -> pd.DataFrame:
     """Walk-forward backtest with threshold re-fit per window and cost model."""
     _validate_series_index("predictions", predictions)
@@ -113,6 +159,14 @@ def walk_forward_backtest(
         test_pred = predictions.iloc[test_slice]
         test_ret = returns.iloc[test_slice]
         target_pos = auto_generate_strategy(test_pred, threshold=thr)
+        regime = classify_regime(test_pred, test_ret)
+        target_pos = apply_execution_controls(
+            target_pos=target_pos,
+            prev_position=prev_position,
+            no_trade_band=no_trade_band,
+            position_smoothing=position_smoothing,
+        )
+        target_pos = target_pos.where(regime != "event", target_pos * float(np.clip(regime_event_position_scale, 0.0, 1.0)))
 
         for i in range(len(test_pred)):
             desired_pos = float(target_pos.iloc[i])
@@ -131,6 +185,7 @@ def walk_forward_backtest(
                     "cost": trading_cost,
                     "pnl": realized_pnl,
                     "threshold": float(thr),
+                    "regime": regime.iloc[i],
                 }
             )
             prev_position = desired_pos
@@ -204,6 +259,9 @@ class BacktestPlatform:
     test_window: int = 20
     commission: float = 0.0
     slippage: float = 0.0
+    no_trade_band: float = 0.0
+    position_smoothing: float = 1.0
+    regime_event_position_scale: float = 0.5
 
     def run(
         self,
@@ -219,6 +277,9 @@ class BacktestPlatform:
             start_date=start_date,
             commission=self.commission,
             slippage=self.slippage,
+            no_trade_band=self.no_trade_band,
+            position_smoothing=self.position_smoothing,
+            regime_event_position_scale=self.regime_event_position_scale,
         )
 
     def run_with_trade_records(
@@ -230,3 +291,45 @@ class BacktestPlatform:
     ) -> tuple[pd.DataFrame, pd.DataFrame]:
         daily = self.run(predictions=predictions, returns=returns, start_date=start_date)
         return daily, trade_records(daily, prices=prices, commission=self.commission, slippage=self.slippage)
+
+    def cost_sensitivity(
+        self,
+        predictions: pd.Series,
+        returns: pd.Series,
+        multipliers: list[float] | None = None,
+        start_date: str | pd.Timestamp | None = None,
+    ) -> pd.DataFrame:
+        """Run walk-forward under cost multipliers (e.g. 1x~3x)."""
+        if multipliers is None:
+            multipliers = [1.0, 2.0, 3.0]
+
+        rows: list[dict] = []
+        for m in multipliers:
+            daily = walk_forward_backtest(
+                predictions=predictions,
+                returns=returns,
+                train_window=self.train_window,
+                test_window=self.test_window,
+                start_date=start_date,
+                commission=self.commission * m,
+                slippage=self.slippage * m,
+                no_trade_band=self.no_trade_band,
+                position_smoothing=self.position_smoothing,
+                regime_event_position_scale=self.regime_event_position_scale,
+            )
+            if daily.empty:
+                rows.append({"cost_multiplier": m, "final_equity": np.nan, "sharpe": np.nan, "max_drawdown": np.nan})
+                continue
+            pnl = daily["pnl"].fillna(0.0)
+            vol = pnl.std()
+            sharpe = float(0.0 if vol <= 1e-12 else np.sqrt(252) * pnl.mean() / vol)
+            max_dd = float((daily["equity"] / daily["equity"].cummax() - 1).min())
+            rows.append(
+                {
+                    "cost_multiplier": float(m),
+                    "final_equity": float(daily["equity"].iloc[-1]),
+                    "sharpe": sharpe,
+                    "max_drawdown": max_dd,
+                }
+            )
+        return pd.DataFrame(rows)

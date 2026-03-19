@@ -31,6 +31,9 @@ SEED = int(os.getenv("CHRONOS_SEED", "42"))
 # Backtest cost model defaults (one-way rates).
 COMMISSION = float(os.getenv("CHRONOS_COMMISSION", "0.0002"))
 SLIPPAGE = float(os.getenv("CHRONOS_SLIPPAGE", "0.0003"))
+NO_TRADE_BAND = float(os.getenv("CHRONOS_NO_TRADE_BAND", "0.1"))
+POSITION_SMOOTHING = float(os.getenv("CHRONOS_POSITION_SMOOTHING", "0.6"))
+REGIME_EVENT_POSITION_SCALE = float(os.getenv("CHRONOS_REGIME_EVENT_POSITION_SCALE", "0.5"))
 
 
 def runtime_config_summary() -> str:

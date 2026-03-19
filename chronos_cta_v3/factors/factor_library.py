@@ -19,6 +19,7 @@ def compute_factors(df: pd.DataFrame) -> pd.DataFrame:
     low = d["low"].astype(float)
     open_ = d["open"].astype(float)
     volm = d.get("volume", pd.Series(np.nan, index=d.index)).astype(float)
+    hold = d.get("hold", pd.Series(np.nan, index=d.index)).astype(float)
 
     ret1 = close.pct_change()
     tr = pd.concat(
@@ -63,6 +64,14 @@ def compute_factors(df: pd.DataFrame) -> pd.DataFrame:
     features["basis_proxy_20"] = features["overnight_gap"].rolling(20).mean()
     features["carry_proxy_20"] = features["mom20"] - features["vol20"]
     features["carry_proxy_60"] = features["mom60"] - features["vol60"]
+    features["overnight_vol_20"] = features["overnight_gap"].rolling(20).std()
+    features["overnight_skew_60"] = features["overnight_gap"].rolling(60).skew()
+    features["overnight_kurt_60"] = features["overnight_gap"].rolling(60).kurt()
+    # Positive value suggests gap and intraday move reinforce each other.
+    features["gap_fill_1"] = features["overnight_gap"] * features["intraday_ret"]
+    features["gap_sign_persist_20"] = (
+        features["overnight_gap"].pipe(np.sign).eq(features["overnight_gap"].shift(1).pipe(np.sign)).rolling(20).mean()
+    )
 
     # Seasonality / calendar (6)
     features["month"] = d["date"].dt.month
@@ -108,6 +117,8 @@ def compute_factors(df: pd.DataFrame) -> pd.DataFrame:
     features["up_down_ratio_20"] = _safe_div((ret1 > 0).rolling(20).sum(), (ret1 < 0).rolling(20).sum())
     features["ret_autocorr_20"] = ret1.rolling(20).corr(ret1.shift(1))
     features["ret_autocorr_60"] = ret1.rolling(60).corr(ret1.shift(1))
+    features["hl_efficiency_20"] = _safe_div((close - open_).abs(), (high - low)).rolling(20).mean()
+    features["volume_sign_persist_20"] = np.sign(features["vol_chg_5"]).rolling(20).mean().abs()
 
     # Higher moments / tail risk (8)
     for w in [10, 20, 60]:
@@ -134,6 +145,24 @@ def compute_factors(df: pd.DataFrame) -> pd.DataFrame:
         [features["vol_regime"].astype(float), features["momentum_regime"].astype(float)], axis=1
     ).mean(axis=1)
     features["close_open_gap_std_20"] = features["overnight_gap"].rolling(20).std()
+    features["vol_term"] = features["vol10"] - features["vol60"]
+    features["vol_term_zscore_60"] = (features["vol_term"] - features["vol_term"].rolling(60).mean()) / features[
+        "vol_term"
+    ].rolling(60).std()
+
+    # Open-interest structure (requires hold column from futures_loader; safely degrades to NaN if unavailable)
+    hold_chg_1 = hold.pct_change()
+    hold_chg_5 = hold.pct_change(5)
+    hold_chg_20 = hold.pct_change(20)
+    ret20 = close.pct_change(20)
+    ret20_z = (ret20 - ret20.rolling(60).mean()) / ret20.rolling(60).std()
+    oi20_z = (hold_chg_20 - hold_chg_20.rolling(60).mean()) / hold_chg_20.rolling(60).std()
+    features["oi_chg_1"] = hold_chg_1
+    features["oi_chg_5"] = hold_chg_5
+    features["oi_chg_20"] = hold_chg_20
+    features["price_oi_div"] = ret20_z - oi20_z
+    features["oi_beta_60"] = ret1.rolling(60).corr(hold_chg_1)
+    features["vol_oi_sync_20"] = features["vol_chg_5"].rolling(20).corr(hold_chg_5)
 
     factor_df = pd.DataFrame(features, index=d.index)
     out = pd.concat([d, factor_df], axis=1)

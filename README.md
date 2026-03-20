@@ -296,3 +296,15 @@ daily, trades = bt.run_with_trade_records(predictions, returns, prices)
 4. 再逐步调优 `train_window / test_window / threshold grid / 风险参数`。
 
 这样可以先保证流程正确，再优化策略表现。
+
+---
+
+## 9. 因子扩展说明（新增）
+
+项目已扩展以下两类能力：
+- 仅基于 `open/high/low/close/volume/hold` 的细粒度时序因子；
+- 跨品种横截面因子（动量/反转/拥挤度/行业内相对强弱）。
+
+详细使用文档请参考：
+
+- `docs/factor_usage_guide_zh.md`

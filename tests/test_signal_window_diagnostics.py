@@ -6,7 +6,7 @@ from chronos_cta_v3.backtest.backtest_engine import diagnose_signal_windows
 def test_diagnose_signal_windows_counts_and_threshold() -> None:
     idx = pd.date_range("2026-01-01", periods=8, freq="D")
     predictions = pd.Series([0.01, 0.01, 0.01, 0.01, -0.2, 0.2, -0.1, 0.0], index=idx)
-    returns = pd.Series(0.0, index=idx)
+    returns = pd.Series([0.0, 0.0, 0.0, 0.0, -0.01, 0.02, -0.03, 0.01], index=idx)
 
     out = diagnose_signal_windows(predictions, returns, train_window=4, test_window=4)
 
@@ -19,3 +19,7 @@ def test_diagnose_signal_windows_counts_and_threshold() -> None:
     assert row["neg_position_days"] == 2
     assert row["pos_position_days"] == 1
     assert row["flat_days"] == 1
+    assert row["short_avg_ret"] == -0.02
+    assert row["long_avg_ret"] == 0.02
+    assert row["short_win_rate"] == 1.0
+    assert row["long_win_rate"] == 1.0

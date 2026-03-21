@@ -65,9 +65,18 @@ def main() -> None:
         total_neg_pred = int(diag["pred_lt_neg_thr"].sum())
         total_neg_pos = int(diag["neg_position_days"].sum())
         total_points = int(diag["test_points"].sum())
+        short_days = int(diag["neg_position_days"].sum())
+        long_days = int(diag["pos_position_days"].sum())
+        short_avg = float(diag["short_avg_ret"].dropna().mean()) if "short_avg_ret" in diag else float("nan")
+        long_avg = float(diag["long_avg_ret"].dropna().mean()) if "long_avg_ret" in diag else float("nan")
+        short_hit = float(diag["short_win_rate"].dropna().mean()) if "short_win_rate" in diag else float("nan")
+        long_hit = float(diag["long_win_rate"].dropna().mean()) if "long_win_rate" in diag else float("nan")
         print(
             f"\n[{symbol}] 窗口数={len(diag)}, 测试点={total_points}, "
-            f"pred<-thr 合计={total_neg_pred}, -1持仓天数合计={total_neg_pos}"
+            f"pred<-thr 合计={total_neg_pred}, -1持仓天数合计={total_neg_pos}, "
+            f"short_days={short_days}, long_days={long_days}, "
+            f"short_avg_ret={short_avg:.6f}, long_avg_ret={long_avg:.6f}, "
+            f"short_win_rate={short_hit:.2%}, long_win_rate={long_hit:.2%}"
         )
         print(diag.to_string(index=False))
 

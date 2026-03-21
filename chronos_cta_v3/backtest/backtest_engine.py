@@ -173,6 +173,13 @@ def diagnose_signal_windows(
 
         thr = optimize_signal_threshold(train_pred, train_ret)
         target_pos = auto_generate_strategy(test_pred, threshold=thr)
+        short_mask = test_pred < -thr
+        long_mask = test_pred > thr
+        flat_mask = ~(short_mask | long_mask)
+
+        short_rets = returns.iloc[test_slice][short_mask]
+        long_rets = returns.iloc[test_slice][long_mask]
+        flat_rets = returns.iloc[test_slice][flat_mask]
 
         rows.append(
             {
@@ -187,6 +194,11 @@ def diagnose_signal_windows(
                 "neg_position_days": int((target_pos == -1.0).sum()),
                 "pos_position_days": int((target_pos == 1.0).sum()),
                 "flat_days": int((target_pos == 0.0).sum()),
+                "short_avg_ret": float(short_rets.mean()) if not short_rets.empty else np.nan,
+                "long_avg_ret": float(long_rets.mean()) if not long_rets.empty else np.nan,
+                "flat_avg_ret": float(flat_rets.mean()) if not flat_rets.empty else np.nan,
+                "short_win_rate": float((short_rets < 0).mean()) if not short_rets.empty else np.nan,
+                "long_win_rate": float((long_rets > 0).mean()) if not long_rets.empty else np.nan,
             }
         )
     return pd.DataFrame(rows)

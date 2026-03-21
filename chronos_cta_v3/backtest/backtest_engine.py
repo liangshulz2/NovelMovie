@@ -141,6 +141,57 @@ def walk_forward_backtest(
     return out
 
 
+def diagnose_signal_windows(
+    predictions: pd.Series,
+    returns: pd.Series,
+    train_window: int = 120,
+    test_window: int = 20,
+    start_date: str | pd.Timestamp | None = None,
+) -> pd.DataFrame:
+    """Diagnose walk-forward signal generation per test window."""
+    _validate_series_index("predictions", predictions)
+    _validate_series_index("returns", returns)
+
+    returns = returns.reindex(predictions.index).fillna(0.0)
+    if start_date is not None:
+        start_ts = pd.Timestamp(start_date)
+        mask = predictions.index >= start_ts
+        predictions = predictions.loc[mask]
+        returns = returns.reindex(predictions.index).fillna(0.0)
+
+    rows = []
+    n = len(predictions)
+    for start in range(train_window, n, test_window):
+        train_slice = slice(start - train_window, start)
+        test_slice = slice(start, min(start + test_window, n))
+
+        train_pred = predictions.iloc[train_slice]
+        train_ret = returns.iloc[train_slice]
+        test_pred = predictions.iloc[test_slice]
+        if test_pred.empty:
+            continue
+
+        thr = optimize_signal_threshold(train_pred, train_ret)
+        target_pos = auto_generate_strategy(test_pred, threshold=thr)
+
+        rows.append(
+            {
+                "train_start": train_pred.index[0],
+                "train_end": train_pred.index[-1],
+                "test_start": test_pred.index[0],
+                "test_end": test_pred.index[-1],
+                "threshold": float(thr),
+                "test_points": int(len(test_pred)),
+                "pred_lt_neg_thr": int((test_pred < -thr).sum()),
+                "pred_gt_pos_thr": int((test_pred > thr).sum()),
+                "neg_position_days": int((target_pos == -1.0).sum()),
+                "pos_position_days": int((target_pos == 1.0).sum()),
+                "flat_days": int((target_pos == 0.0).sum()),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
 def trade_records(
     daily: pd.DataFrame,
     prices: pd.Series | None = None,

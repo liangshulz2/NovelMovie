@@ -180,6 +180,8 @@ def diagnose_signal_windows(
         short_rets = returns.iloc[test_slice][short_mask]
         long_rets = returns.iloc[test_slice][long_mask]
         flat_rets = returns.iloc[test_slice][flat_mask]
+        short_pnl = -short_rets
+        long_pnl = long_rets
 
         rows.append(
             {
@@ -197,6 +199,16 @@ def diagnose_signal_windows(
                 "short_avg_ret": float(short_rets.mean()) if not short_rets.empty else np.nan,
                 "long_avg_ret": float(long_rets.mean()) if not long_rets.empty else np.nan,
                 "flat_avg_ret": float(flat_rets.mean()) if not flat_rets.empty else np.nan,
+                "short_avg_pnl": float(short_pnl.mean()) if not short_pnl.empty else np.nan,
+                "long_avg_pnl": float(long_pnl.mean()) if not long_pnl.empty else np.nan,
+                "short_count": int(len(short_rets)),
+                "long_count": int(len(long_rets)),
+                "short_win_days": int((short_rets < 0).sum()),
+                "long_win_days": int((long_rets > 0).sum()),
+                "short_sum_ret": float(short_rets.sum()) if not short_rets.empty else 0.0,
+                "long_sum_ret": float(long_rets.sum()) if not long_rets.empty else 0.0,
+                "short_sum_sq_ret": float((short_rets**2).sum()) if not short_rets.empty else 0.0,
+                "long_sum_sq_ret": float((long_rets**2).sum()) if not long_rets.empty else 0.0,
                 "short_win_rate": float((short_rets < 0).mean()) if not short_rets.empty else np.nan,
                 "long_win_rate": float((long_rets > 0).mean()) if not long_rets.empty else np.nan,
             }

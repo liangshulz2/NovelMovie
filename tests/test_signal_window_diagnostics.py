@@ -1,4 +1,5 @@
 import pandas as pd
+import pytest
 
 from chronos_cta_v3.backtest.backtest_engine import diagnose_signal_windows
 
@@ -21,5 +22,15 @@ def test_diagnose_signal_windows_counts_and_threshold() -> None:
     assert row["flat_days"] == 1
     assert row["short_avg_ret"] == -0.02
     assert row["long_avg_ret"] == 0.02
+    assert row["short_avg_pnl"] == 0.02
+    assert row["long_avg_pnl"] == 0.02
+    assert row["short_count"] == 2
+    assert row["long_count"] == 1
+    assert row["short_win_days"] == 2
+    assert row["long_win_days"] == 1
+    assert row["short_sum_ret"] == pytest.approx(-0.04)
+    assert row["long_sum_ret"] == pytest.approx(0.02)
+    assert row["short_sum_sq_ret"] == pytest.approx(0.001)
+    assert row["long_sum_sq_ret"] == pytest.approx(0.0004)
     assert row["short_win_rate"] == 1.0
     assert row["long_win_rate"] == 1.0

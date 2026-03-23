@@ -9,17 +9,21 @@ from chronos_cta_v3.config import (
     CAPITAL,
     DEVICE,
     LOOKBACK,
+    MARKET,
     MAX_PORTFOLIO_RISK,
     MAX_POSITION,
     MIN_HISTORY,
     MODEL_PATH,
     PRED_LEN,
     SEED,
+    STOCK_CSV_DIR,
+    STOCK_LIST_FILE,
     SYMBOLS,
     TARGET_VOL,
     runtime_config_summary,
 )
 from chronos_cta_v3.data.futures_loader import load_futures
+from chronos_cta_v3.data.stock_loader import load_stock_from_csv, load_stock_list
 from chronos_cta_v3.factors.factor_library import compute_factors
 from chronos_cta_v3.factors.factor_selector import select_features
 from chronos_cta_v3.model.chronos_model import ChronosModel
@@ -108,8 +112,17 @@ def run() -> pd.DataFrame:
     records = []
     returns_history = {}
 
-    for symbol in SYMBOLS:
-        raw_df = load_futures(symbol)
+    symbols = SYMBOLS
+    if MARKET not in {"futures", "stocks"}:
+        raise ValueError(f"Unsupported CHRONOS_MARKET={MARKET}. Use 'futures' or 'stocks'.")
+    if MARKET == "stocks" and not symbols:
+        symbols = load_stock_list(STOCK_LIST_FILE)
+
+    for symbol in symbols:
+        if MARKET == "stocks":
+            raw_df = load_stock_from_csv(symbol, STOCK_CSV_DIR)
+        else:
+            raw_df = load_futures(symbol)
         df = compute_factors(raw_df).tail(LOOKBACK).copy()
         if len(df) < MIN_HISTORY:
             continue

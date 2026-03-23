@@ -11,8 +11,8 @@
 
 ## 1. 项目简介
 
-这是一个面向期货场景的 CTA 策略研究框架，主要流程为：
-1. 通过 AkShare 拉取期货行情；
+这是一个支持 **期货 / 股票** 双市场切换的 CTA 策略研究框架，主要流程为：
+1. 按市场类型加载数据（期货：AkShare；股票：本地 CSV）；
 2. 计算因子并做特征筛选；
 3. 使用 Chronos + XGBoost 进行预测，并做模型融合；
 4. 通过风险与仓位模块给出最终仓位；
@@ -25,6 +25,7 @@ chronos_cta_v3/
   main.py                    # 主流程入口
   config.py                  # 全局配置
   data/futures_loader.py     # 期货数据加载
+  data/stock_loader.py       # 股票本地CSV加载
   factors/                   # 因子计算与筛选
   model/                     # Chronos/XGB 模型与融合
   portfolio/                 # 仓位、风控、组合优化
@@ -75,6 +76,7 @@ pytest -q
 ```bash
 export CHRONOS_MODEL_PATH=./models/chronos-2
 export CHRONOS_DEVICE=cpu
+export CHRONOS_MARKET=futures
 export CHRONOS_SYMBOLS=RB0,SA0,FG0,CU0
 export CHRONOS_COMMISSION=0.0002
 export CHRONOS_SLIPPAGE=0.0003
@@ -89,6 +91,9 @@ export CHRONOS_SLIPPAGE=0.0003
 关键参数位于 `chronos_cta_v3/config.py`：
 
 - `SYMBOLS`：要交易/研究的品种代码列表（例如 `RB0`, `CU0`）。
+- `MARKET`：市场类型，`futures` 或 `stocks`（环境变量 `CHRONOS_MARKET`）。
+- `STOCK_LIST_FILE`：股票代码列表文件（`stocks` 模式下可用）。
+- `STOCK_CSV_DIR`：股票 CSV 文件目录（`stocks` 模式下可用）。
 - `MODEL_PATH`：Chronos 模型路径（支持环境变量 `CHRONOS_MODEL_PATH` 覆盖）。
 - `DEVICE`：`cpu` 或 `cuda`。
 - `PRED_LEN`：预测步长。
@@ -99,6 +104,20 @@ export CHRONOS_SLIPPAGE=0.0003
 - `LOOKBACK` / `TRAIN_WINDOW` / `MIN_HISTORY`：历史窗口相关参数。
 
 你可以先用默认参数跑通，再逐步调优。
+
+### 3.1 股票模式（A股本地CSV）示例
+
+```bash
+export CHRONOS_MARKET=stocks
+export CHRONOS_STOCK_LIST_FILE=D:/stockdata/stocks.txt
+export CHRONOS_STOCK_CSV_DIR=D:/stockdata/csv
+# 可选：若不设置 CHRONOS_SYMBOLS，将自动从 CHRONOS_STOCK_LIST_FILE 读取
+unset CHRONOS_SYMBOLS
+python -m chronos_cta_v3.main
+```
+
+股票 CSV 支持中文列名自动映射，例如：`日期/开盘/最高/最低/收盘/成交量/成交额/换手率`。至少需包含
+`日期/开盘/最高/最低/收盘/成交量` 六列。
 
 ---
 

@@ -158,6 +158,8 @@ def compute_factors(df: pd.DataFrame) -> pd.DataFrame:
     open_ = d["open"].astype(float)
     volm = d.get("volume", pd.Series(np.nan, index=d.index)).astype(float)
     hold = d.get("hold", pd.Series(np.nan, index=d.index)).astype(float)
+    amount = d.get("amount", pd.Series(np.nan, index=d.index)).astype(float)
+    turnover_rate = d.get("turnover_rate", pd.Series(np.nan, index=d.index)).astype(float)
 
     ret1 = close.pct_change()
     tr = pd.concat(
@@ -257,6 +259,23 @@ def compute_factors(df: pd.DataFrame) -> pd.DataFrame:
     features["ret_autocorr_60"] = ret1.rolling(60).corr(ret1.shift(1))
     features["hl_efficiency_20"] = _safe_div((close - open_).abs(), (high - low)).rolling(20).mean()
     features["volume_sign_persist_20"] = np.sign(features["vol_chg_5"]).rolling(20).mean().abs()
+
+    # Stock-oriented money-flow and turnover factors (degrade to NaN when missing amount/turnover_rate)
+    typical_price = (high + low + close) / 3
+    money_flow_multiplier = _safe_div((close - low) - (high - close), (high - low))
+    money_flow_volume = money_flow_multiplier * volm
+    adl = money_flow_volume.cumsum()
+    features["amount_chg_5"] = amount.pct_change(5)
+    features["amount_ratio_20_60"] = _safe_div(amount.rolling(20).mean(), amount.rolling(60).mean())
+    features["avg_trade_price"] = _safe_div(amount, volm)
+    features["avg_trade_price_gap"] = _safe_div(features["avg_trade_price"], typical_price) - 1
+    features["money_flow_multiplier"] = money_flow_multiplier
+    features["money_flow_volume_20"] = money_flow_volume.rolling(20).sum()
+    features["adl_slope_20"] = adl.diff(20)
+    features["chaikin_osc"] = adl.ewm(span=3, adjust=False).mean() - adl.ewm(span=10, adjust=False).mean()
+    features["turnover_rate_5"] = turnover_rate.rolling(5).mean()
+    features["turnover_rate_20"] = turnover_rate.rolling(20).mean()
+    features["turnover_vol_adj_20"] = _safe_div(features["turnover_rate_20"], features["vol20"])
 
     # Higher moments / tail risk (8)
     for w in [10, 20, 60]:

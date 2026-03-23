@@ -6,11 +6,18 @@ import os
 
 
 def _parse_symbols() -> list[str]:
-    symbols_raw = os.getenv("CHRONOS_SYMBOLS", "RB0,SA0,FG0,CU0,AL0,M0,Y0,MA0,V0,I0,AU0,AG0,ZC0,SR0,CF0,TA0,WH0")
+    market = os.getenv("CHRONOS_MARKET", "futures").strip().lower()
+    default_symbols = "" if market == "stocks" else "RB0,SA0,FG0,CU0,AL0,M0,Y0,MA0,V0,I0,AU0,AG0,ZC0,SR0,CF0,TA0,WH0"
+    symbols_raw = os.getenv("CHRONOS_SYMBOLS", default_symbols)
     return [s.strip() for s in symbols_raw.split(",") if s.strip()]
 
 
 SYMBOLS = _parse_symbols()
+MARKET = os.getenv("CHRONOS_MARKET", "futures").strip().lower()
+
+# Stock mode local-file options.
+STOCK_LIST_FILE = os.getenv("CHRONOS_STOCK_LIST_FILE", "D:/stockdata/stocks.txt")
+STOCK_CSV_DIR = os.getenv("CHRONOS_STOCK_CSV_DIR", "D:/stockdata/csv")
 
 # Use environment variable if provided; otherwise a safe relative default.
 MODEL_PATH = os.getenv("CHRONOS_MODEL_PATH", "E:/ai/chronos-2")
@@ -37,5 +44,5 @@ def runtime_config_summary() -> str:
     """Human-readable runtime config summary for startup logs."""
     return (
         f"MODEL_PATH={MODEL_PATH}, DEVICE={DEVICE}, PRED_LEN={PRED_LEN}, "
-        f"SYMBOLS={','.join(SYMBOLS)}"
+        f"MARKET={MARKET}, SYMBOLS={','.join(SYMBOLS)}"
     )
